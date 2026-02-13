@@ -1,0 +1,39 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/ingestion-agent:latest', '-f', 'agents/ingestion-agent/Dockerfile', '.']
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/ingestion-agent:latest']
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: gcloud
+  args:
+    - 'run'
+    - 'deploy'
+    - 'ingestion-agent'
+    - '--image'
+    - 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/ingestion-agent:latest'
+    - '--region'
+    - 'europe-west1'
+    - '--platform'
+    - 'managed'
+    - '--no-allow-unauthenticated'
+    - '--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest'
+    - '--set-env-vars=PYTHONPATH=../..,LOG_LEVEL=INFO,ENABLE_DETAILED_LOGGING=true,GCP_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GCS_BUCKET_NAME=${PROJECT_ID}-book-images,VERTEX_AI_LOCATION=europe-west1'
+
+# Create Eventarc trigger (replaces old book-analyzed trigger)
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: 'bash'
+  args:
+    - '-c'
+    - |
+      PROJECT_NUMBER=$(gcloud projects describe ${PROJECT_ID} --format="value(projectNumber)")
+      gcloud eventarc triggers create ingestion-agent-trigger \
+        --location=europe-west1 \
+        --destination-run-service=ingestion-agent \
+        --destination-run-region=europe-west1 \
+        --event-filters="type=google.cloud.pubsub.topic.v1.messagePublished" \
+        --transport-topic=projects/${PROJECT_ID}/topics/trigger-ingestion \
+        --service-account=$${PROJECT_NUMBER}-compute@developer.gserviceaccount.com \
+        || echo "Trigger might already exist, continuing..."
+
+images:
+- 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/ingestion-agent:latest'

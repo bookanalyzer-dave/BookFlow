@@ -1,0 +1,7 @@
+functions-framework==3.*
+google-cloud-pubsub==2.13.0
+google-cloud-firestore==2.11.0
+google-genai>=0.8.0
+
+# Shared library (installed via Docker COPY)
+aiohttp

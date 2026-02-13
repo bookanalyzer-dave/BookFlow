@@ -1,0 +1,5 @@
+functions-framework==3.*
+google-cloud-pubsub==2.13.12
+google-cloud-firestore==2.11.1
+google-genai>=0.8.0
+# shared library installed via Docker COPY

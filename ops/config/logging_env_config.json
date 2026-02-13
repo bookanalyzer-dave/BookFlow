@@ -1,0 +1,17 @@
+{
+  "production": {
+    "log_level": "ERROR",
+    "enable_debug": false,
+    "structured_logging": true
+  },
+  "alpha": {
+    "log_level": "INFO",
+    "enable_debug": false,
+    "structured_logging": true
+  },
+  "development": {
+    "log_level": "DEBUG",
+    "enable_debug": true,
+    "structured_logging": false
+  }
+}

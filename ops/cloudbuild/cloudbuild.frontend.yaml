@@ -1,0 +1,24 @@
+steps:
+# 1. Install & Build
+- name: 'node:20'
+  entrypoint: /bin/sh
+  args:
+    - -c
+    - |
+      npm install
+      npm run build
+  dir: 'dashboard/frontend'
+  env:
+    - 'VITE_BACKEND_API_URL=https://dashboard-backend-563616472394.europe-west1.run.app'
+
+# 2. Deploy to Firebase
+- name: 'node:20'
+  entrypoint: /bin/sh
+  args:
+    - -c
+    - |
+      npx firebase-tools deploy --only hosting --project ${PROJECT_ID} --non-interactive
+  dir: 'dashboard/frontend'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

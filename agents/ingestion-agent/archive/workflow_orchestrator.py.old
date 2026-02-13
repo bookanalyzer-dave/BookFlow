@@ -1,0 +1,425 @@
+"""
+Workflow Orchestrator für intelligentes Routing zwischen ISBN-Path und Search-Path.
+"""
+
+import asyncio
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Dict, Any, Optional, List
+from pathlib import Path
+import logging
+
+from shared.isbn import ISBNExtractor, ISBNExtractionResult
+from shared.apis.google_books import GoogleBooksClient
+from shared.apis.openlibrary import OpenLibraryClient
+from shared.apis.data_fusion import DataFusionEngine, FusedBookData
+from shared.apis.search_grounding import GoogleSearchGrounding
+from shared.image_sorter import ImageSorterAgent
+from shared.firestore.client import get_firestore_client
+
+logger = logging.getLogger(__name__)
+
+
+class WorkflowPath(Enum):
+    """Possible workflow execution paths."""
+    ISBN = "isbn"
+    SEARCH_GROUNDING = "search_grounding"
+    MANUAL_REVIEW = "manual_review"
+
+
+@dataclass
+class ProcessingResult:
+    """Result of book processing."""
+    success: bool
+    path: WorkflowPath
+    book_data: Optional[Dict[str, Any]] = None
+    confidence: float = 0.0
+    requires_user_input: bool = False
+    error_message: Optional[str] = None
+    
+    # Metadata
+    processing_time_ms: float = 0.0
+    cost_estimate: float = 0.0
+    api_calls: Dict[str, int] = field(default_factory=dict)
+
+
+class WorkflowOrchestrator:
+    """
+    Orchestrates book ingestion workflow with intelligent routing.
+    
+    Flow:
+    1. ISBN Extraction (parallel)
+    2. Optional: GUI Review
+    3. Routing Decision
+    4. Execute Path (ISBN or Search)
+    5. Handle Errors
+    """
+    
+    # Configuration
+    ISBN_CONFIDENCE_THRESHOLD = 0.7
+    
+    def __init__(
+        self,
+        project_id: str,
+        isbn_confidence_threshold: float = 0.7,
+        enable_gui_review: bool = False
+    ):
+        """Initialize Workflow Orchestrator."""
+        self.project_id = project_id
+        self.isbn_confidence_threshold = isbn_confidence_threshold
+        self.enable_gui_review = enable_gui_review
+        
+        # Initialize components
+        self.isbn_extractor = ISBNExtractor(
+            confidence_threshold=isbn_confidence_threshold
+        )
+        # Initialize API clients with proper error handling
+        import os
+        google_books_key = os.getenv("GOOGLE_BOOKS_API_KEY", "")
+        self.google_books = GoogleBooksClient(api_key=google_books_key) if google_books_key else None
+        self.openlibrary = OpenLibraryClient()
+        self.data_fusion = DataFusionEngine()
+        
+        # GoogleSearchGrounding uses system credentials, no project_id needed
+        try:
+            self.search_grounding = GoogleSearchGrounding()
+        except Exception as e:
+            logger.warning(f"Failed to initialize Google Search Grounding: {e}")
+            self.search_grounding = None
+        
+        self.image_sorter = ImageSorterAgent()
+        
+        logger.info(
+            f"Workflow Orchestrator initialized "
+            f"(ISBN threshold: {isbn_confidence_threshold})"
+        )
+    
+    async def process_book(
+        self,
+        book_id: str,
+        image_paths: List[Path],
+        user_id: str,
+        user_settings: Optional[Dict[str, Any]] = None
+    ) -> ProcessingResult:
+        """
+        Process book with intelligent routing.
+        
+        Args:
+            book_id: Firestore book document ID
+            image_paths: List of image file paths
+            user_id: User ID for multi-tenancy
+            user_settings: Optional user preferences
+            
+        Returns:
+            ProcessingResult with path taken
+        """
+        start_time = time.time()
+        user_settings = user_settings or {}
+        
+        try:
+            # Phase 1: ISBN Extraction
+            logger.info(f"Book {book_id}: Starting ISBN extraction from {len(image_paths)} images")
+            isbn_result = await self.isbn_extractor.extract_from_images(
+                image_paths, user_id
+            )
+            logger.info(
+                f"Book {book_id}: ISBN extraction complete "
+                f"(success={isbn_result.success}, confidence={isbn_result.confidence:.2f})"
+            )
+            
+            # Optional: GUI Review
+            if self.enable_gui_review or user_settings.get("gui_review_enabled", False):
+                logger.info(f"Book {book_id}: GUI Review enabled")
+                # TODO: Implement GUI Review trigger
+                pass
+            
+            # Routing Decision
+            if self._should_use_isbn_path(isbn_result):
+                logger.info(f"Book {book_id}: Routing to ISBN-Path")
+                result = await self._execute_isbn_path(
+                    book_id, isbn_result, image_paths, user_id
+                )
+            else:
+                logger.info(
+                    f"Book {book_id}: Routing to Search-Path "
+                    f"(ISBN success={isbn_result.success}, confidence={isbn_result.confidence:.2f})"
+                )
+                result = await self._execute_search_path(
+                    book_id, isbn_result, image_paths, user_id
+                )
+            
+            # Add processing time
+            result.processing_time_ms = (time.time() - start_time) * 1000
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Book {book_id}: Error in workflow: {e}", exc_info=True)
+            return ProcessingResult(
+                success=False,
+                path=WorkflowPath.MANUAL_REVIEW,
+                error_message=str(e),
+                processing_time_ms=(time.time() - start_time) * 1000,
+                requires_user_input=True
+            )
+    
+    def _should_use_isbn_path(self, isbn_result: ISBNExtractionResult) -> bool:
+        """
+        Decide if ISBN path should be used.
+        
+        Criteria:
+        - ISBN found (success == True)
+        - Confidence >= threshold
+        - Validation passed
+        
+        Returns:
+            True: Use ISBN-Path
+            False: Use Search-Path
+        """
+        return (
+            isbn_result.success and
+            isbn_result.confidence >= self.isbn_confidence_threshold and
+            isbn_result.validation_passed
+        )
+    
+    async def _execute_isbn_path(
+        self,
+        book_id: str,
+        isbn_result: ISBNExtractionResult,
+        image_paths: List[Path],
+        user_id: str
+    ) -> ProcessingResult:
+        """
+        Execute ISBN-based workflow.
+        
+        Steps:
+        1. Parallel API Calls (Google Books + OpenLibrary)
+        2. Data Fusion
+        3. Fallback to Search-Path if no data found
+        
+        Returns:
+            ProcessingResult with book data
+        """
+        isbn = isbn_result.isbn
+        logger.info(f"Book {book_id}: Starting ISBN-Path with ISBN {isbn}")
+        
+        try:
+            # Parallel API Calls
+            logger.debug(f"Book {book_id}: Calling Google Books and OpenLibrary APIs")
+            gb_task = asyncio.create_task(self._async_google_books_search(isbn))
+            ol_task = asyncio.create_task(self._async_openlibrary_search(isbn))
+            
+            gb_data, ol_data = await asyncio.gather(
+                gb_task, ol_task, return_exceptions=True
+            )
+            
+            # Handle exceptions
+            if isinstance(gb_data, Exception):
+                logger.warning(f"Book {book_id}: Google Books API error: {gb_data}")
+                gb_data = None
+            if isinstance(ol_data, Exception):
+                logger.warning(f"Book {book_id}: OpenLibrary API error: {ol_data}")
+                ol_data = None
+            
+            # Check if we got data
+            if not gb_data and not ol_data:
+                logger.warning(
+                    f"Book {book_id}: ISBN {isbn} not found in any API. "
+                    "Falling back to Search-Path."
+                )
+                return await self._execute_search_path(
+                    book_id, isbn_result, image_paths, user_id
+                )
+            
+            # Data Fusion
+            logger.debug(f"Book {book_id}: Fusing data from APIs")
+            # Prepare base data for fusion
+            base_data = {"isbn": isbn}
+            fused_data = await self.data_fusion.fuse_book_data(
+                base_data=base_data,
+                enable_parallel=False  # We already have the data
+            )
+            
+            if not fused_data or not fused_data.title:
+                logger.warning(f"Book {book_id}: Data fusion failed. Fallback to Search-Path.")
+                return await self._execute_search_path(
+                    book_id, isbn_result, image_paths, user_id
+                )
+            
+            logger.info(
+                f"Book {book_id}: ISBN-Path successful "
+                f"(title='{fused_data.title}', confidence={fused_data.overall_confidence:.2f})"
+            )
+            
+            return ProcessingResult(
+                success=True,
+                path=WorkflowPath.ISBN,
+                book_data=self._fused_data_to_dict(fused_data),
+                confidence=fused_data.overall_confidence,
+                api_calls={"google_books": 1, "openlibrary": 1}
+            )
+            
+        except Exception as e:
+            logger.error(f"Book {book_id}: Error in ISBN-Path: {e}", exc_info=True)
+            # Try fallback
+            return await self._execute_search_path(
+                book_id, isbn_result, image_paths, user_id
+            )
+    
+    async def _execute_search_path(
+        self,
+        book_id: str,
+        isbn_result: ISBNExtractionResult,
+        image_paths: List[Path],
+        user_id: str
+    ) -> ProcessingResult:
+        """
+        Execute Search Grounding based workflow.
+        
+        Steps:
+        1. Image Classification & Renaming
+        2. Gemini Flash + Google Search Grounding
+        3. Metadata Extraction
+        
+        Returns:
+            ProcessingResult with book data
+        """
+        logger.info(f"Book {book_id}: Starting Search-Path")
+        
+        try:
+            # Classify images (if not already done)
+            logger.debug(f"Book {book_id}: Classifying images")
+            classifications = await self.image_sorter.classify_batch(image_paths)
+            
+            # Create labels dict
+            labels = {
+                str(p): classifications[i].get("label", "unknown") if i < len(classifications) else "unknown"
+                for i, p in enumerate(image_paths)
+            }
+            
+            # Search Grounding mit multimodalen Bildern
+            logger.debug(f"Book {book_id}: Calling Search Grounding")
+            if not self.search_grounding:
+                logger.error(f"Book {book_id}: Search Grounding not available")
+                return await self._handle_complete_failure(
+                    book_id, image_paths, isbn_result, {"error": "Search Grounding not available"}
+                )
+            
+            search_result = await self.search_grounding.search_book_market_data(
+                title=None,  # Wird von Gemini extrahiert
+                author=None,
+                isbn=isbn_result.isbn if isbn_result.success else None,  # Als Kontext
+                images=[str(p) for p in image_paths]
+                # Note: labels parameter not supported by search_book_market_data
+            )
+            
+            if not search_result or not search_result.get("title"):
+                logger.warning(f"Book {book_id}: Search-Path failed to identify book")
+                return await self._handle_complete_failure(
+                    book_id, image_paths, isbn_result, search_result
+                )
+            
+            logger.info(
+                f"Book {book_id}: Search-Path successful "
+                f"(title='{search_result.get('title')}', confidence={search_result.get('confidence', 0):.2f})"
+            )
+            
+            return ProcessingResult(
+                success=True,
+                path=WorkflowPath.SEARCH_GROUNDING,
+                book_data=search_result,
+                confidence=search_result.get("confidence", 0.5),
+                api_calls={"search_grounding": 1}
+            )
+            
+        except Exception as e:
+            logger.error(f"Book {book_id}: Error in Search-Path: {e}", exc_info=True)
+            return await self._handle_complete_failure(
+                book_id, image_paths, isbn_result, {"error": str(e)}
+            )
+    
+    async def _handle_complete_failure(
+        self,
+        book_id: str,
+        image_paths: List[Path],
+        isbn_result: ISBNExtractionResult,
+        search_result: Dict[str, Any]
+    ) -> ProcessingResult:
+        """
+        Handle case when both paths failed.
+        
+        Actions:
+        1. Set status to "needs_manual_review"
+        2. Save all available data
+        3. Notify user
+        4. Add to manual review queue
+        
+        Returns:
+            ProcessingResult with manual review flag
+        """
+        logger.warning(f"Book {book_id}: Both paths failed. Requires manual review.")
+        
+        failure_info = {
+            "book_id": book_id,
+            "isbn_attempt": {
+                "found": isbn_result.success,
+                "isbn": isbn_result.isbn,
+                "confidence": isbn_result.confidence,
+                "validation": isbn_result.validation_passed
+            },
+            "search_attempt": {
+                "executed": True,
+                "error": search_result.get("error", "No data found")
+            },
+            "images": [str(p) for p in image_paths],
+            "requires_user_input": True
+        }
+        
+        # TODO: Save to Firestore manual review queue
+        # TODO: Trigger user notification
+        
+        return ProcessingResult(
+            success=False,
+            path=WorkflowPath.MANUAL_REVIEW,
+            book_data=failure_info,
+            requires_user_input=True,
+            error_message="Automatic identification failed"
+        )
+    
+    async def _async_google_books_search(self, isbn: str) -> Optional[Dict[str, Any]]:
+        """Async wrapper for Google Books search."""
+        if not self.google_books:
+            logger.debug("Google Books client not available (no API key)")
+            return None
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            self.google_books.search_by_isbn,
+            isbn
+        )
+    
+    async def _async_openlibrary_search(self, isbn: str) -> Optional[Any]:
+        """Async wrapper for OpenLibrary search."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            self.openlibrary.search_by_isbn,
+            isbn
+        )
+    
+    def _fused_data_to_dict(self, fused_data: FusedBookData) -> Dict[str, Any]:
+        """Convert FusedBookData to dictionary."""
+        return {
+            "isbn": fused_data.isbn,
+            "title": fused_data.title,
+            "authors": fused_data.authors,
+            "publisher": fused_data.publisher,
+            "published_date": fused_data.published_date,
+            "description": fused_data.description,
+            "categories": fused_data.categories,
+            "page_count": fused_data.page_count,
+            "confidence": fused_data.overall_confidence,
+            "quality_score": fused_data.quality_score,
+            "sources_used": fused_data.sources_used
+        }

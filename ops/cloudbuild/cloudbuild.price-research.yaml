@@ -1,0 +1,32 @@
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/price-research-agent:latest', '-f', 'agents/price-research-agent/Dockerfile', '.']
+
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/price-research-agent:latest']
+
+  # Deploy container image to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'price-research-agent'
+      - '--image'
+      - 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/price-research-agent:latest'
+      - '--region'
+      - 'europe-west1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '512Mi'
+      - '--timeout'
+      - '600'
+      - '--set-env-vars'
+      - 'GCP_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GCS_BUCKET_NAME=${PROJECT_ID}-book-images,VERTEX_AI_LOCATION=europe-west1'
+
+images:
+  - 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/price-research-agent:latest'

@@ -1,0 +1,183 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isServiceAccount() {
+      // Allow if the user has the 'service' claim (custom claim)
+      // OR if it's a backend request (often handled via Admin SDK which bypasses rules, 
+      // but for client-like access from agents, we need this).
+      // BETTER: Use a specific custom claim 'role' == 'service_agent'
+      return request.auth.token.role == 'service_agent' || 
+             (request.auth.token.email != null && 
+              request.auth.token.email.matches('.*@.*\\.iam\\.gserviceaccount\\.com'));
+    }
+    
+    function isValidProvider(provider) {
+      return provider in ['openai', 'google', 'anthropic'];
+    }
+    
+    function isPositiveNumber(value) {
+      return value is number && value > 0;
+    }
+    
+    function hasServerTimestamp() {
+      return request.resource.data.created_at == request.time ||
+             request.resource.data.updated_at == request.time;
+    }
+    
+    // Rate limiting helper (max 1000 writes per minute per user)
+    function isWithinRateLimit() {
+      // Note: This is a placeholder - actual rate limiting should be implemented
+      // via Cloud Functions or backend logic for precise control
+      return true;
+    }
+    
+    // ============================================================
+    // ADMIN ACCESS - Service Accounts (Backend & Agents)
+    // ============================================================
+    
+    // ============================================================
+    // USER DOCUMENTS
+    // ============================================================
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+    
+    // ============================================================
+    // BOOKS COLLECTION
+    // ============================================================
+    match /users/{userId}/books/{bookId} {
+      allow read: if isOwner(userId) || isServiceAccount();
+      allow write: if isOwner(userId) && isWithinRateLimit();
+      
+      // Multi-Source Book Data Subcollection
+      match /sources/{sourceId} {
+        // Users can read their book's data sources (transparency)
+        allow read: if isOwner(userId);
+        // Only Ingestion Agent can write source data
+        allow write: if isServiceAccount();
+      }
+    }
+    
+    // ============================================================
+    // LLM CREDENTIALS COLLECTION
+    // ============================================================
+    match /users/{userId}/llm_credentials/{credentialId} {
+      // User can only access their own credentials
+      allow read: if isOwner(userId) || isServiceAccount();
+      
+      // User can create/update/delete their credentials
+      allow create: if isOwner(userId) && 
+        isValidProvider(request.resource.data.provider) &&
+        request.resource.data.keys().hasAll(['provider', 'encrypted_api_key', 'created_at']) &&
+        hasServerTimestamp();
+      
+      allow update: if isOwner(userId) && 
+        isValidProvider(request.resource.data.provider) &&
+        hasServerTimestamp();
+      
+      allow delete: if isOwner(userId);
+      
+      // Service Account (Backend) needs write access for encryption operations
+      allow write: if isServiceAccount();
+    }
+    
+    // ============================================================
+    // LLM USAGE TRACKING COLLECTION
+    // ============================================================
+    match /users/{userId}/llm_usage/{usageId} {
+      // User can read their own usage data (transparency)
+      allow read: if isOwner(userId) || isServiceAccount();
+      
+      // Only Backend/Agents can write usage data (no user manipulation)
+      allow create, update: if isServiceAccount() && 
+        request.resource.data.keys().hasAll(['provider', 'model', 'tokens', 'cost', 'timestamp']) &&
+        isPositiveNumber(request.resource.data.tokens) &&
+        isPositiveNumber(request.resource.data.cost);
+      
+      // Usage data is immutable for users (read-only)
+      allow write: if isServiceAccount();
+      allow delete: if false;
+    }
+    
+    // ============================================================
+    // LLM SETTINGS COLLECTION
+    // ============================================================
+    match /users/{userId}/llm_settings/config {
+      // User can read and write their own settings
+      allow read: if isOwner(userId) || isServiceAccount();
+      
+      allow create, update: if isOwner(userId) && 
+        // Budget limits must be positive numbers
+        ((!request.resource.data.keys().hasAny(['budget_limit_monthly', 'budget_limit_per_request'])) ||
+         (isPositiveNumber(request.resource.data.get('budget_limit_monthly', 1)) &&
+          isPositiveNumber(request.resource.data.get('budget_limit_per_request', 1)))) &&
+        // Provider preferences must be valid
+        ((!request.resource.data.keys().hasAny(['preferred_provider'])) ||
+         isValidProvider(request.resource.data.preferred_provider)) &&
+        hasServerTimestamp();
+      
+      allow delete: if isOwner(userId);
+      
+      // Backend needs write access for system operations
+      allow write: if isServiceAccount();
+    }
+    
+    // ============================================================
+    // LLM AUDIT LOG COLLECTION
+    // ============================================================
+    match /users/{userId}/llm_audit/{auditId} {
+      // User can read their own audit logs (transparency & GDPR compliance)
+      allow read: if isOwner(userId) || isServiceAccount();
+      
+      // Only system can write audit logs
+      allow create: if isServiceAccount() && 
+        request.resource.data.keys().hasAll(['action', 'timestamp', 'details']) &&
+        hasServerTimestamp();
+      
+      // Audit logs are immutable
+      allow update, delete: if false;
+      
+      // Service accounts have full write access
+      allow write: if isServiceAccount();
+    }
+    
+    // ============================================================
+    // CONDITION ASSESSMENTS COLLECTION
+    // ============================================================
+    match /users/{userId}/condition_assessments/{assessmentId} {
+      // User can read their own assessments
+      allow read: if isOwner(userId) || isServiceAccount();
+      
+      // Only Condition-Assessor Agent can write assessments
+      allow create: if isServiceAccount() && 
+        request.resource.data.keys().hasAll(['book_id', 'condition', 'confidence', 'timestamp']) &&
+        request.resource.data.book_id is string &&
+        request.resource.data.condition in ['new', 'like_new', 'very_good', 'good', 'acceptable', 'poor'] &&
+        request.resource.data.confidence >= 0 && request.resource.data.confidence <= 1 &&
+        hasServerTimestamp();
+      
+      allow update, delete: if isServiceAccount();
+      
+      // Users cannot write assessments (agent-only)
+      allow write: if isServiceAccount();
+    }
+    
+    // ============================================================
+    // LEGACY/FALLBACK RULES
+    // ============================================================
+    // Deny all other access by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

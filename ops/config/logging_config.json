@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "json": {
+      "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
+      "format": "%(asctime)s %(name)s %(levelname)s %(message)s"
+    }
+  },
+  "handlers": {
+    "console": {
+      "class": "logging.StreamHandler",
+      "formatter": "json",
+      "stream": "ext://sys.stdout"
+    },
+    "cloud_logging": {
+      "class": "google.cloud.logging.handlers.CloudLoggingHandler",
+      "client": "auto",
+      "name": "agent-logs"
+    }
+  },
+  "root": {
+    "level": "INFO",
+    "handlers": [
+      "console",
+      "cloud_logging"
+    ]
+  },
+  "loggers": {
+    "shared": {
+      "level": "INFO"
+    },
+    "agents": {
+      "level": "INFO"
+    },
+    "dashboard": {
+      "level": "INFO"
+    }
+  }
+}

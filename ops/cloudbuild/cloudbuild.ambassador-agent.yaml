@@ -1,0 +1,50 @@
+steps:
+  # Build the container image using the Dockerfile and push it to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-t', 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/ambassador-agent:latest',
+      '-f', 'agents/ambassador-agent/Dockerfile',
+      '.'
+    ]
+
+  # Push the image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/ambassador-agent:latest']
+
+  # Deploy the image to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'ambassador-agent'
+      - '--image'
+      - 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/ambassador-agent:latest'
+      - '--region'
+      - 'europe-west1'
+      - '--platform'
+      - 'managed'
+      - '--no-allow-unauthenticated'
+      - '--set-secrets=EBAY_CONF_TOKEN=EBAY_CONF_TOKEN:latest,EBAY_DEV_ID=EBAY_DEV_ID:latest,EBAY_APP_ID=EBAY_APP_ID:latest,EBAY_CERT_ID=EBAY_CERT_ID:latest'
+      - '--set-env-vars=GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GCP_PROJECT=${PROJECT_ID},GCS_BUCKET_NAME=${PROJECT_ID}-book-images,VERTEX_AI_LOCATION=europe-west1'
+      - '--memory=1Gi'
+
+  # Create Eventarc trigger for strategist completion
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        PROJECT_NUMBER=$(gcloud projects describe ${PROJECT_ID} --format="value(projectNumber)")
+        gcloud eventarc triggers create ambassador-agent-trigger \
+          --location=europe-west1 \
+          --destination-run-service=ambassador-agent \
+          --destination-run-region=europe-west1 \
+          --event-filters="type=google.cloud.pubsub.topic.v1.messagePublished" \
+          --transport-topic=projects/${PROJECT_ID}/topics/strategist-completed \
+          --service-account=$${PROJECT_NUMBER}-compute@developer.gserviceaccount.com \
+          || echo "Trigger might already exist, continuing..."
+
+images:
+- 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/ambassador-agent:latest'

@@ -1,0 +1,25 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - heading "📚 Book Manager" [level=1] [ref=e9]
+        - generic [ref=e10]:
+          - link "📖 Bücher" [ref=e11] [cursor=pointer]:
+            - /url: /
+          - link "📤 Upload" [ref=e12] [cursor=pointer]:
+            - /url: /upload
+      - generic [ref=e13]:
+        - generic [ref=e14]: Willkommen, test-1770211166255@simulation.com
+        - button "Logout" [ref=e15]
+  - main [ref=e16]:
+    - generic [ref=e18]:
+      - heading "Bilder hochladen & Analysieren" [level=2] [ref=e19]
+      - generic [ref=e20]:
+        - button "Choose File" [ref=e21]
+        - paragraph [ref=e22]: Bitte laden Sie Bilder vom Cover, der Rückseite und dem Impressum hoch.
+      - button "Analysiere..." [disabled] [ref=e23]
+      - paragraph [ref=e27]: KI analysiert Buchdaten...
+```

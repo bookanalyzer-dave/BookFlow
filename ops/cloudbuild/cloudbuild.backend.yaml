@@ -1,0 +1,33 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args:
+  - 'build'
+  - '-t'
+  - 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/dashboard-backend:latest'
+  - '-f'
+  - 'dashboard/backend/Dockerfile'
+  - '.'
+
+# Push the image to Container Registry
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/dashboard-backend:latest']
+
+# Deploy the image to Cloud Run
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: gcloud
+  args:
+  - 'run'
+  - 'deploy'
+  - 'dashboard-backend'
+  - '--image'
+  - 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/dashboard-backend:latest'
+  - '--region'
+  - 'europe-west1'
+  - '--platform'
+  - 'managed'
+  - '--allow-unauthenticated'
+  - '--set-env-vars'
+  - 'GCP_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GCS_BUCKET_NAME=${PROJECT_ID}-book-images,VERTEX_AI_LOCATION=europe-west1'
+
+images:
+- 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/dashboard-backend:latest'

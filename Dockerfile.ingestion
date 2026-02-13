@@ -1,0 +1,25 @@
+# Base Image
+FROM python:3.11-slim
+
+# Working Directory
+WORKDIR /app
+
+# Kopiere Anforderungen
+COPY shared/requirements.txt shared-reqs.txt
+COPY agents/ingestion-agent/requirements.txt agent-reqs.txt
+RUN pip install --no-cache-dir -r shared-reqs.txt -r agent-reqs.txt
+
+# Kopiere den gesamten Code
+COPY . .
+
+# WICHTIGSTER SCHRITT: Installiere den 'shared' Ordner als lokales Paket
+# Wir legen eine temporäre setup.py an, falls keine da ist, oder nutzen PYTHONPATH
+# Aber wir machen es jetzt absolut sicher:
+RUN ln -s /app/shared /usr/local/lib/python3.11/site-packages/shared
+
+# Environment
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
+
+# Start Command
+CMD exec functions-framework --target=ingestion_analysis_agent --source=agents/ingestion-agent/main.py --signature-type=cloudevent --port=8080

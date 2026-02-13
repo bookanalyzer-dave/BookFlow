@@ -1,0 +1,14 @@
+Flask
+Flask-Limiter==3.5.0
+gunicorn
+google-cloud-firestore
+google-cloud-storage<3.0.0
+google-cloud-pubsub
+google-cloud-logging
+firebase-admin
+python-dotenv
+requests==2.31.0
+aiohttp==3.9.1
+cryptography
+google-auth
+Flask-Cors

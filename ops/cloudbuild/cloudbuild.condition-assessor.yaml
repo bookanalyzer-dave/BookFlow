@@ -1,0 +1,50 @@
+steps:
+# Build the container image using the Dockerfile and push it to Artifact Registry
+- name: 'gcr.io/cloud-builders/docker'
+  args: [
+    'build',
+    '-t', 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/condition-assessor:latest',
+    '-f', 'agents/condition-assessor/Dockerfile',
+    '.'
+  ]
+
+# Push the image to Artifact Registry
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/condition-assessor:latest']
+
+# Deploy the image to Cloud Run
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: gcloud
+  args:
+    - 'run'
+    - 'deploy'
+    - 'condition-assessor'
+    - '--image'
+    - 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/condition-assessor:latest'
+    - '--region'
+    - 'europe-west1'
+    - '--platform'
+    - 'managed'
+    - '--no-allow-unauthenticated'
+    - '--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest'
+    - '--set-env-vars=GCP_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GCS_BUCKET_NAME=${PROJECT_ID}-book-images,VERTEX_AI_LOCATION=europe-west1'
+    - '--memory=2Gi'
+
+# Create Eventarc trigger (replaces old condition-assessment-jobs trigger)
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: 'bash'
+  args:
+    - '-c'
+    - |
+      PROJECT_NUMBER=$(gcloud projects describe ${PROJECT_ID} --format="value(projectNumber)")
+      gcloud eventarc triggers create condition-assessor-trigger \
+        --location=europe-west1 \
+        --destination-run-service=condition-assessor \
+        --destination-run-region=europe-west1 \
+        --event-filters="type=google.cloud.pubsub.topic.v1.messagePublished" \
+        --transport-topic=projects/${PROJECT_ID}/topics/trigger-condition-assessment \
+        --service-account=$${PROJECT_NUMBER}-compute@developer.gserviceaccount.com \
+        || echo "Trigger might already exist, continuing..."
+
+images:
+- 'europe-west1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/condition-assessor:latest'

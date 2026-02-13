@@ -1,0 +1,9 @@
+steps:
+- name: 'gcr.io/kaniko-project/executor:latest'
+  args:
+  - '--dockerfile=agents/ingestion-agent/Dockerfile'
+  - '--context=.'
+  - '--destination=europe-west1-docker.pkg.dev/$PROJECT_ID/book-processing/ingestion-agent:${_IMAGE_TAG}'
+  - '--cache=false'
+substitutions:
+  _IMAGE_TAG: latest

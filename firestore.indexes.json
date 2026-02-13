@@ -1,0 +1,22 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "llm_credentials",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "provider", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "market_data",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isbn", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

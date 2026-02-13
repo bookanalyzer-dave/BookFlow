@@ -1,0 +1,5 @@
+Flask==2.3.2
+gunicorn==20.1.0
+google-cloud-pubsub==2.13.12
+
+# Shared library (installed via Docker COPY)
