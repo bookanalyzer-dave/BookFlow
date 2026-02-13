@@ -52,59 +52,59 @@ const BookDetailView = ({ book, onClose, onDelete }) => {
     url?.startsWith('gs://') ? url.replace('gs://', 'https://storage.googleapis.com/') : url;
 
   return (
-    <div className="bg-white shadow-xl rounded-2xl overflow-hidden max-w-5xl mx-auto animate-fade-in-up">
-      <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-b border-gray-200">
-        <button 
+    <div className="bg-white shadow-lg rounded-xl overflow-hidden max-w-4xl mx-auto animate-fade-in-up">
+      <div className="bg-gray-50 px-4 py-3 flex justify-between items-center border-b border-gray-200">
+        <button
           onClick={onClose}
-          className="text-blue-600 hover:text-blue-800 font-medium flex items-center gap-2 transition-colors"
+          className="text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 text-sm transition-colors"
         >
-          ← Zurück zur Liste
+          ← Zurück
         </button>
-        <div className="flex gap-4 items-center">
+        <div className="flex gap-3 items-center">
           <StatusBadge status={book.status} />
-          <button 
+          <button
             onClick={() => onDelete(book.id)}
-            className="text-red-500 hover:text-red-700 text-sm font-medium transition-colors"
+            className="text-red-500 hover:text-red-700 text-xs font-medium transition-colors"
           >
             Löschen
           </button>
         </div>
       </div>
 
-      <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-12">
-        {/* LEFT COLUMN: VISUALS */}
-        <div className="space-y-6">
-          <div className="relative aspect-[3/4] bg-gray-100 rounded-xl overflow-hidden shadow-inner flex items-center justify-center group">
+      <div className="p-6 grid grid-cols-1 md:grid-cols-12 gap-8">
+        {/* LEFT COLUMN: VISUALS (Smaller column span) */}
+        <div className="md:col-span-5 space-y-4">
+          <div className="relative aspect-[2/3] bg-gray-100 rounded-lg overflow-hidden shadow-inner flex items-center justify-center group">
             {book.imageUrls?.length > 0 ? (
               <>
                 <img
                   src={imageUrl(book.imageUrls[currentImageIndex])}
                   alt="Buchansicht"
-                  className="max-h-full max-w-full object-contain transition-transform duration-500"
+                  className="max-h-full max-w-full object-contain transition-transform duration-300"
                 />
                 {book.imageUrls.length > 1 && (
                   <>
-                    <button 
+                    <button
                       onClick={(e) => { e.stopPropagation(); setCurrentImageIndex(p => p > 0 ? p - 1 : book.imageUrls.length - 1); }}
-                      className="absolute left-2 top-1/2 -translate-y-1/2 p-2 bg-white/80 rounded-full shadow hover:bg-white opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 bg-white/90 rounded-full shadow hover:bg-white opacity-0 group-hover:opacity-100 transition-opacity"
                     >
                       ‹
                     </button>
-                    <button 
+                    <button
                       onClick={(e) => { e.stopPropagation(); setCurrentImageIndex(p => p < book.imageUrls.length - 1 ? p + 1 : 0); }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-white/80 rounded-full shadow hover:bg-white opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-white/90 rounded-full shadow hover:bg-white opacity-0 group-hover:opacity-100 transition-opacity"
                     >
                       ›
                     </button>
-                    <div className="absolute inset-x-0 bottom-4 flex justify-center gap-2">
+                    <div className="absolute inset-x-0 bottom-3 flex justify-center gap-1.5">
                       {book.imageUrls.map((_, i) => (
-                        <div key={i} className={`h-1.5 w-1.5 rounded-full transition-colors ${i === currentImageIndex ? 'bg-blue-600' : 'bg-gray-300'}`} />
+                        <div key={i} className={`h-1 w-1 rounded-full transition-colors ${i === currentImageIndex ? 'bg-blue-600' : 'bg-gray-300'}`} />
                       ))}
                     </div>
                   </>
                 )}
               </>
-            ) : <div className="text-gray-400 italic">Keine Bilder verfügbar</div>}
+            ) : <div className="text-gray-400 italic text-sm">Kein Bild</div>}
           </div>
           
           <div className="flex flex-wrap gap-2 justify-center">
@@ -112,9 +112,9 @@ const BookDetailView = ({ book, onClose, onDelete }) => {
               <button
                 key={i}
                 onClick={() => setCurrentImageIndex(i)}
-                className={`h-16 w-12 rounded border-2 overflow-hidden transition-all ${i === currentImageIndex ? 'border-blue-500 ring-2 ring-blue-100' : 'border-transparent hover:border-gray-300'}`}
+                className={`h-12 w-9 rounded border overflow-hidden transition-all ${i === currentImageIndex ? 'border-blue-500 ring-1 ring-blue-100' : 'border-transparent hover:border-gray-300'}`}
               >
-                <img 
+                <img
                   src={imageUrl(url)}
                   className="w-full h-full object-cover"
                   alt={`Thumbnail ${i + 1}`}
@@ -124,26 +124,26 @@ const BookDetailView = ({ book, onClose, onDelete }) => {
           </div>
         </div>
 
-        {/* RIGHT COLUMN: DATA */}
-        <div className="space-y-8">
+        {/* RIGHT COLUMN: DATA (Larger column span) */}
+        <div className="md:col-span-7 space-y-6">
           <div>
-            <h2 className="text-3xl font-extrabold text-gray-900 leading-tight">
+            <h2 className="text-2xl font-bold text-gray-900 leading-tight">
               {book.title || "Unbenanntes Buch"}
             </h2>
-            <p className="text-lg text-gray-500 mt-1">
+            <p className="text-sm text-gray-500 mt-1">
               von {Array.isArray(book.authors) ? book.authors.join(', ') : (book.author || "Unbekannter Autor")}
             </p>
           </div>
 
           {/* Price Section */}
           {book.calculatedPrice && (
-            <div className="bg-green-50 border border-green-200 rounded-xl p-6 shadow-sm">
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 shadow-sm">
               <div className="flex justify-between items-baseline">
-                <span className="text-green-700 font-bold uppercase text-xs tracking-widest">Marktwert</span>
-                <span className="text-3xl font-black text-green-900">€{book.calculatedPrice.toFixed(2)}</span>
+                <span className="text-green-700 font-bold uppercase text-[10px] tracking-widest">Marktwert</span>
+                <span className="text-2xl font-black text-green-900">€{book.calculatedPrice.toFixed(2)}</span>
               </div>
               {book.pricing?.reasoning && (
-                <p className="mt-4 text-sm text-green-800 italic leading-relaxed">
+                <p className="mt-2 text-xs text-green-800 italic leading-relaxed">
                   "{book.pricing.reasoning}"
                 </p>
               )}
@@ -291,48 +291,48 @@ const BookList = () => {
 
       {/* Grid */}
       {filteredBooks.length > 0 ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
           {filteredBooks.map((book) => (
-            <div 
-              key={book.id} 
+            <div
+              key={book.id}
               onClick={() => setSelectedBookId(book.id)}
-              className="group bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 border border-gray-100 cursor-pointer overflow-hidden flex flex-col h-full hover:-translate-y-1"
+              className="group bg-white rounded-lg shadow-sm hover:shadow-md transition-all duration-200 border border-gray-100 cursor-pointer overflow-hidden flex flex-col h-full hover:-translate-y-0.5"
             >
-              <div className="aspect-[3/4] bg-gray-100 overflow-hidden relative">
+              <div className="aspect-[2/3] bg-gray-50 overflow-hidden relative">
                 {book.imageUrls?.[0] ? (
                   <img
                     src={book.imageUrls[0].startsWith('gs://') ? book.imageUrls[0].replace('gs://', 'https://storage.googleapis.com/') : book.imageUrls[0]}
                     alt={book.title}
                     loading="lazy"
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-gray-300 bg-gray-50">
-                    <span className="text-4xl opacity-20">📖</span>
+                    <span className="text-2xl opacity-20">📖</span>
                   </div>
                 )}
                 {/* Status Overlay on Hover */}
-                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity scale-75 origin-top-right">
                    <StatusBadge status={book.status} />
                 </div>
               </div>
               
-              <div className="p-4 flex-1 flex flex-col justify-between space-y-2">
+              <div className="p-3 flex-1 flex flex-col justify-between space-y-1">
                 <div>
-                  <h3 className="font-bold text-gray-900 text-sm line-clamp-2 leading-snug" title={book.title}>
+                  <h3 className="font-semibold text-gray-900 text-xs line-clamp-2 leading-tight" title={book.title}>
                     {book.title || "Unbenannt"}
                   </h3>
-                  <p className="text-xs text-gray-500 truncate mt-1">
+                  <p className="text-[10px] text-gray-500 truncate mt-0.5">
                     {Array.isArray(book.authors) ? book.authors[0] : (book.author || "Unbekannter Autor")}
                   </p>
                 </div>
                 
-                <div className="pt-2 flex justify-between items-center border-t border-gray-50 mt-2">
-                  <span className={`text-sm font-black ${book.calculatedPrice ? 'text-gray-900' : 'text-gray-300'}`}>
+                <div className="pt-1.5 flex justify-between items-center border-t border-gray-50 mt-1">
+                  <span className={`text-xs font-bold ${book.calculatedPrice ? 'text-gray-900' : 'text-gray-300'}`}>
                     {book.calculatedPrice ? `€${book.calculatedPrice.toFixed(2)}` : "—"}
                   </span>
-                  <div className={`h-2 w-2 rounded-full ring-2 ring-white ${
-                    book.status === 'priced' ? 'bg-green-500' : 
+                  <div className={`h-1.5 w-1.5 rounded-full ring-1 ring-white ${
+                    book.status === 'priced' ? 'bg-green-500' :
                     book.status === 'needs_review' ? 'bg-yellow-500' :
                     'bg-gray-300'
                   }`} />

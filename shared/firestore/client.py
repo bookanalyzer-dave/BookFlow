@@ -44,7 +44,8 @@ VALID_STATUS_TRANSITIONS = {
     "processing_condition": ["condition_assessed", "condition_failed", "ingested", "failed"],
     "condition_assessment_pending": ["processing_condition", "condition_assessed", "failed"],
     "condition_assessed": ["priced", "listed", "processing_condition", "failed", "pricing_failed"],
-    "condition_failed": ["processing_condition", "ingested", "failed"],
+    "condition_failed": ["processing_condition", "ingested", "failed", "pricing_failed"],
+    "pricing_failed": ["processing_condition", "ingested", "failed", "condition_failed", "condition_assessed"],
     "priced": ["listed", "condition_assessed", "failed", "pricing_failed"],
     "listed": ["sold", "delisted"],
     "failed": ["ingesting", "pending_analysis"]
@@ -70,8 +71,11 @@ def update_book(user_id: str, book_id: str, data: Dict[str, Any]):
                     data['status'] = 'priced'
                     return doc_ref.update(data)
 
-                allowed_transitions = VALID_STATUS_TRANSITIONS.get(current_status, [])
-                if new_status not in allowed_transitions:
+                # Relaxed validation: If status is unknown, allow any transition (fail open)
+                # to prevent deadlocks during development/migrations.
+                allowed_transitions = VALID_STATUS_TRANSITIONS.get(current_status)
+                
+                if allowed_transitions is not None and new_status not in allowed_transitions:
                     raise ValueError(
                         f"Invalid status transition from '{current_status}' to '{new_status}'. Allowed: {allowed_transitions}"
                     )

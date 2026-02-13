@@ -270,6 +270,11 @@ async def ingest_book_with_gemini(
     if task_prompt is None:
         task_prompt = TASK_PROMPT_TEMPLATE
     
+    # Force explicit JSON request in prompt if grounding is enabled
+    # Since we can't use response_mime_type="application/json" with tools
+    if config.enable_grounding:
+        task_prompt += "\n\nWICHTIG: Antworte AUSSCHLIESSLICH mit einem validen JSON-Objekt. Kein Markdown, kein erklärender Text davor oder danach. Nur das rohe JSON."
+    
     try:
         # 1. Bilder vorbereiten
         logger.info(
@@ -400,28 +405,54 @@ async def ingest_book_with_gemini(
 
         logger.info(f"📝 Result Text (first 500 chars): {result_text[:500]}")
         
-        # JSON Parsing: Finde JSON-Objekt im Text (ignoriere Chat-Intro/Outro)
+        # JSON Parsing: Robustere Logik für "Chatty" Models
         try:
             result_json = None
-            # Strategie 1: Finde erstes '{' und letztes '}'
-            start_idx = result_text.find('{')
-            end_idx = result_text.rfind('}')
             
-            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                json_str = result_text[start_idx:end_idx+1]
-                try:
-                    result_json = json.loads(json_str)
-                    logger.info("✅ JSON erfolgreich via Substring-Extraction extrahiert")
-                except json.JSONDecodeError:
-                    logger.warning("⚠️ Substring-Extraction fehlgeschlagen, versuche Cleanup...")
+            # Strategie 1: Suche nach Markdown Code-Blöcken (z.B. ```json ... ```)
+            # Wir nehmen den LETZTEN Block, da Modelle oft erst ein Beispiel zeigen und dann das Ergebnis.
+            code_block_pattern = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
+            matches = code_block_pattern.findall(result_text)
             
-            # Strategie 2: Markdown Cleanup (Fallback)
+            if matches:
+                logger.info(f"🔍 Found {len(matches)} JSON code blocks.")
+                # Versuche Blocks von hinten nach vorne zu parsen
+                for json_str in reversed(matches):
+                    try:
+                        result_json = json.loads(json_str)
+                        logger.info("✅ Valid JSON found in markdown code block (using last valid block)")
+                        break
+                    except json.JSONDecodeError:
+                        continue
+            
+            # Strategie 2: Fallback - Suche alle JSON-Objekte im Rohtext
             if result_json is None:
-                clean_text = re.sub(r"^```json\s*", "", result_text, flags=re.MULTILINE)
-                clean_text = re.sub(r"^```\s*", "", clean_text, flags=re.MULTILINE)
-                clean_text = re.sub(r"```$", "", clean_text, flags=re.MULTILINE).strip()
-                result_json = json.loads(clean_text)
-                logger.info("✅ Markdown-bereinigter Text als JSON geladen")
+                logger.info("⚠️ No valid code blocks found, scanning raw text for JSON objects...")
+                decoder = json.JSONDecoder()
+                idx = 0
+                candidates = []
+                
+                while idx < len(result_text):
+                    # Finde nächstes '{'
+                    start_idx = result_text.find('{', idx)
+                    if start_idx == -1:
+                        break
+                        
+                    try:
+                        obj, end_idx = decoder.raw_decode(result_text, start_idx)
+                        candidates.append(obj)
+                        idx = end_idx
+                    except json.JSONDecodeError:
+                        idx = start_idx + 1
+                
+                if candidates:
+                    logger.info(f"🔍 Found {len(candidates)} JSON candidates in raw text.")
+                    # Wir nehmen das letzte Objekt, da dies am wahrscheinlichsten das finale Ergebnis ist
+                    result_json = candidates[-1]
+                    logger.info("✅ Selected last valid JSON candidate from raw text")
+
+            if result_json is None:
+                raise json.JSONDecodeError("No valid JSON object found in response", result_text, 0)
                 
             logger.info(f"📋 JSON Top-level keys: {list(result_json.keys())}")
 
@@ -440,16 +471,29 @@ async def ingest_book_with_gemini(
         book_data_dict = None
         
         if isinstance(result_json, dict):
+            # 1. Check for nested keys
             for key in possible_keys:
                 if key in result_json:
                     book_data_dict = result_json[key]
                     logger.info(f"✅ Found book data using key: '{key}'")
                     break
             
-            # Fallback: Wenn kein Key passt, aber das Root-Objekt wie Buchdaten aussieht
-            if not book_data_dict and ("title" in result_json or "isbn" in result_json):
-                book_data_dict = result_json
-                logger.info("✅ Using root JSON as book data (no specific key found)")
+            # 2. Check root-level structure (flat JSON)
+            if not book_data_dict:
+                # Prüfe auf 'metadata' key, den Gemini oft bei grounding nutzt
+                if "metadata" in result_json and isinstance(result_json["metadata"], dict):
+                    # Flatten: Merge metadata into root or use as base
+                    logger.info("✅ Found 'metadata' key - attempting to restructure for BookData")
+                    book_data_dict = result_json["metadata"]
+                    # Kopiere Top-Level Felder wie 'confidence_score' in das book_data_dict
+                    for k, v in result_json.items():
+                        if k != "metadata" and k not in book_data_dict:
+                            book_data_dict[k] = v
+                
+                # Prüfe ob Root selbst schon BookData ist (title/authors/isbn)
+                elif "title" in result_json or "isbn" in result_json or "authors" in result_json:
+                     book_data_dict = result_json
+                     logger.info("✅ Using root JSON as book data (structure matches)")
         
         logger.info(f"🔍 Extracted book_data from result_json: {book_data_dict is not None}")
         

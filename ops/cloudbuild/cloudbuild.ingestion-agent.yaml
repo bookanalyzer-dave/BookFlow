@@ -31,7 +31,7 @@ steps:
         --destination-run-service=ingestion-agent \
         --destination-run-region=europe-west1 \
         --event-filters="type=google.cloud.pubsub.topic.v1.messagePublished" \
-        --transport-topic=projects/${PROJECT_ID}/topics/trigger-ingestion \
+        --transport-topic=projects/${PROJECT_ID}/topics/ingestion-requests \
         --service-account=$${PROJECT_NUMBER}-compute@developer.gserviceaccount.com \
         || echo "Trigger might already exist, continuing..."
 

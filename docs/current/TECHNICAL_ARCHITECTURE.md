@@ -1,7 +1,7 @@
 # Technische Architektur: Intelligent Book Sales Pipeline
 
-**Version:** 3.0 (System-LLM Refactoring)
-**Letztes Update:** 04.02.2026
+**Version:** 3.1 (Stability Fixes)
+**Letztes Update:** 13.02.2026
 **Basis:** Refactoring & System-Level LLM Integration
 
 ---
@@ -29,7 +29,7 @@ Sechs spezialisierte Agents, die jeweils eine klar definierte Aufgabe haben:
 #### 1.1 Ingestion Agent
 **Datei:** [`agents/ingestion-agent/main.py`](agents/ingestion-agent/main.py:1)
 **Status:** ✅ DEPLOYED (Cloud Run)
-**Trigger:** Pub/Sub Topic `trigger-ingestion`
+**Trigger:** Pub/Sub Topic `ingestion-requests` (via Eventarc Trigger `ingestion-agent-trigger`)
 
 **Verantwortlichkeit:**
 - End-to-End Bildanalyse und Metadaten-Extraktion via Gemini 2.5 Pro
@@ -38,19 +38,21 @@ Sechs spezialisierte Agents, die jeweils eine klar definierte Aufgabe haben:
 
 **Workflow:**
 ```
-1. Empfängt CloudEvent von "trigger-ingestion" Topic
+1. Empfängt CloudEvent von "ingestion-requests" Topic
 2. Lädt Bilder von Cloud Storage (In-Memory)
 3. Ruft shared library `simplified_ingestion` auf
 4. Gemini Call (Multimodal + Search Grounding Tool)
-5. Extraktion von JSON + Grounding Metadata
+5. Extraktion von JSON + Grounding Metadata (Robustes Parsing für Chatty Models)
 6. Firestore Update → Status "analyzed"
-7. Trigger Condition Assessment (Pub/Sub)
+7. Trigger Condition Assessment (Pub/Sub: condition-assessment-jobs)
+8. Trigger Price Research (Pub/Sub: price-research-requests)
 ```
 
 **Konfiguration:**
 - `GEMINI_MODEL`: gemini-2.5-pro (via Config)
 - `ENABLE_GROUNDING`: True
 - `MAX_RETRIES`: 3
+- `STRICT_ENV_CHECKS`: True (Fail Fast bei fehlender Project ID/PubSub)
 
 **Dependencies:**
 - System Gemini Integration (GEMINI_API_KEY)
@@ -59,7 +61,7 @@ Sechs spezialisierte Agents, die jeweils eine klar definierte Aufgabe haben:
 #### 1.2 Condition Assessor Agent
 **Datei:** [`agents/condition-assessor/main.py`](agents/condition-assessor/main.py:1)
 **Status:** ✅ DEPLOYED (Cloud Run)
-**Trigger:** Pub/Sub Topic `trigger-condition-assessment` (Push Endpoint)
+**Trigger:** Pub/Sub Topic `condition-assessment-jobs` (Push Endpoint)
 
 **System-API-Key Architektur:**
 
@@ -113,32 +115,32 @@ Runtime: Python 3.11
 Region: europe-west1
 Memory: 2GB
 Timeout: 540s (9 Minuten)
-Trigger: Pub/Sub "trigger-condition-assessment" (HTTP Push)
+Trigger: Pub/Sub "condition-assessment-jobs" (HTTP Push)
 ```
 
 **Detaillierte Dokumentation:** [`docs/agents/CONDITION_ASSESSOR.md`](../agents/CONDITION_ASSESSOR.md)
 
 #### 1.3 Strategist Agent (Pricing Agent)
 **Datei:** [`agents/strategist-agent/main.py`](agents/strategist-agent/main.py:1)
-**Status:** ✅ IMPLEMENTED & VERIFIED
-**Trigger:** Pub/Sub `condition-assessment-completed`
+**Status:** ✅ IMPLEMENTED & DEPLOYED
+**Trigger:** Pub/Sub `price-research-requests`
 
 **Verantwortlichkeit:**
-- **"Super Request" Pricing:** Konsolidierte Preisfindung in einem Schritt
-- **Multimodal Analysis:** Kombiniert Condition-Daten + Bilder + Metadaten
-- **Live Market Research:** Nutzt Google Search Tool für Echtzeit-Preise
+- **"Super Request" Pricing:** Konsolidierte Preisfindung
+- **Analytic Approach:** Nutzt Condition Data + Metadaten (Text-only für Stabilität)
 - **Decision Making:** Bestimmt Listenpreis, Konfidenz und Begründung
 
 **Funktionsweise (Gemini 2.5 Pro):**
 Der Agent führt keine komplexen State-Machines mehr aus, sondern nutzt die Fähigkeiten von **Gemini 2.5 Pro**:
-1. Empfängt Buch-Metadaten und Bild-URLs.
-2. Konstruiert einen umfassenden Prompt ("Expert Antiquarian Bookseller").
-3. Aktiviert **Google Search Tool** für Live-Recherche.
-4. Generiert JSON-Response mit Preis, Konfidenz und Quellen.
+1. Empfängt Buch-Metadaten.
+2. Lädt Condition Report aus Firestore.
+3. Konstruiert einen umfassenden Prompt ("Expert Antiquarian Bookseller").
+4. Generiert JSON-Response mit Preis, Konfidenz und Begründung.
+   - *Hinweis:* Google Search Tool temporär deaktiviert wg. Vertex AI 400 Errors bei Multimodal Requests.
 
 **Configuration:**
-- `MODEL`: `gemini-2.5-pro`
-- `TOOLS`: `googleSearchRetrieval`
+- `MODEL`: `gemini-1.5-flash` (Fallback Mode)
+- `TOOLS`: Disabled (Temporary Stability Fix - Uses Internal Knowledge)
 - `TEMPERATURE`: 0.1
 
 #### 1.4 Scout Agent
@@ -166,7 +168,7 @@ Der Agent führt keine komplexen State-Machines mehr aus, sondern nutzt die Fäh
 #### 1.6 Ambassador Agent
 **Datei:** [`agents/ambassador-agent/main.py`](agents/ambassador-agent/main.py:1)  
 **Status:** ⚠️ Code fertig, Deployment pending (eBay Credentials fehlen)  
-**Trigger:** Pub/Sub Topic `list-book-request` & `delist-book-everywhere`
+**Trigger:** Pub/Sub Topic `book-listing-requests` & `delist-book-everywhere`
 
 **Verantwortlichkeit:**
 - Multi-Platform Listing Management
@@ -301,7 +303,7 @@ VALID_STATUS_TRANSITIONS = {
 **Logik:**
 - Nutzt `google-genai` SDK für Vertex AI Zugriff
 - Konfiguriert das Model mit `GoogleSearchRetrieval` Tool
-- Parst und validiert die JSON-Antwort des Models
+- **Parsing:** Robustes JSON-Parsing inkl. Markdown Code-Block Extraction
 - Berechnet einfache Confidence-Metriken basierend auf Model-Feedback
 
 ---
@@ -342,10 +344,10 @@ VALID_STATUS_TRANSITIONS = {
 ┌─────────────────────────────────────────────────────────────────────┐
 │ DASHBOARD BACKEND                                                     │
 │ - Create book document in Firestore (status: "ingested")            │
-│ - Publish message to Pub/Sub "trigger-ingestion"                        │
+│ - Publish message to Pub/Sub "ingestion-requests"                       │
 └─────────────────────────────────────────────────────────────────────┘
     │
-    │ 5. Pub/Sub Event
+    │ 5. Pub/Sub Event (Eventarc Trigger)
     ↓
 ┌─────────────────────────────────────────────────────────────────────┐
 │ INGESTION AGENT (Cloud Run)                                          │
@@ -356,6 +358,9 @@ VALID_STATUS_TRANSITIONS = {
 │ │    - Multimodal Analysis (Bilder)                               │ │
 │ │    - Google Search Grounding (Live-Recherche)                   │ │
 │ │    - Structured Output Extraction (JSON)                        │ │
+│ │ 4. Parallel Dispatch:                                           │ │
+│ │    - Trigger Condition Assessment                               │ │
+│ │    - Trigger Price Research                                     │ │
 │ └─────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────┘
     │
@@ -370,10 +375,11 @@ VALID_STATUS_TRANSITIONS = {
 │ - sources_used: ["google_search", "gemini_knowledge"]               │
 └─────────────────────────────────────────────────────────────────────┘
     │
-    │ 7. Trigger Condition Assessment
+    │ 7. Trigger Condition Assessment & Pricing
     ↓
 ┌─────────────────────────────────────────────────────────────────────┐
-│ PUB/SUB (trigger-condition-assessment)                                │
+│ PUB/SUB (condition-assessment-jobs)                                 │
+│ PUB/SUB (price-research-requests)                                   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -519,7 +525,7 @@ Service: ingestion-agent
 ├── Memory: 2GB
 ├── CPU: 2
 ├── Timeout: 540s (9 min)
-└── Trigger: Pub/Sub "trigger-ingestion"
+└── Trigger: Pub/Sub "ingestion-requests" (Eventarc)
 
 Service: dashboard-backend
 ├── Image: gcr.io/project-52b2fab8-15a1-4b66-9f3/dashboard-backend
@@ -543,16 +549,16 @@ Project: project-52b2fab8-15a1-4b66-9f3
 ### Pub/Sub Topics
 
 ```
-trigger-ingestion
+ingestion-requests (ehemals trigger-ingestion)
 ├── Publisher: Dashboard Backend
 └── Subscriber: Ingestion Agent
 
-trigger-condition-assessment
+condition-assessment-jobs (ehemals trigger-condition-assessment)
 ├── Publisher: Ingestion Agent
 └── Subscriber: Condition Assessor Agent
 
-condition-assessment-completed
-├── Publisher: Condition Assessor Agent
+price-research-requests
+├── Publisher: Ingestion Agent / Condition Assessor Agent
 └── Subscriber: Strategist Agent
 
 sale-notification-received
@@ -656,7 +662,7 @@ Bucket: {project-id}-book-images
 
 ---
 
-**Dokument-Version:** 3.0 (System-LLM Refactoring)
-**Basis:** Refactoring 04.02.2026
+**Dokument-Version:** 3.1 (Stability Fixes)
+**Basis:** Refactoring 13.02.2026
 **Validiert:** Gegen tatsächliche Implementierung  
-**Nächste Review:** Nach Agent-Deployments
+**Nächste Review:** Nach Stability Monitoring

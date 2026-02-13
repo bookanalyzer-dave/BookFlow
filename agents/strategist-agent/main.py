@@ -23,7 +23,7 @@ from shared.firestore.client import get_firestore_client, get_book, update_book
 
 # Feature Flag
 PRICE_RESEARCH_ENABLED = os.environ.get("PRICE_RESEARCH_ENABLED", "true").lower() == "true"
-GEMINI_MODEL_PRICE = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro-preview-0205")
+GEMINI_MODEL_PRICE = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash-002")
 
 # GenAI Import for Types and Client
 try:
@@ -55,6 +55,7 @@ def get_required_env(key: str) -> str:
 db = None
 publisher = None
 genai_client = None
+PROJECT_ID = None
 
 def init_globals():
     global db, publisher, genai_client, PROJECT_ID
@@ -225,7 +226,7 @@ async def _generate_price_suggestion(client: genai.Client, uid: str, book_id: st
         condition_text = json.dumps(condition_data, indent=2)
 
     prompt = f"""
-You are an expert antiquarian bookseller. Your task is to determine the optimal listing price for a book based on its details, condition, and current market data.
+You are an expert antiquarian bookseller. Your task is to determine the optimal listing price for a book based on its details, condition, and your extensive internal knowledge of the book market.
 
 **Book Details:**
 Title: {title}
@@ -238,10 +239,10 @@ ISBN: {isbn}
 {condition_text}
 
 **Instructions:**
-1. Analyze the book's visual appearance from the provided images (if any) and the condition report.
-2. **MANDATORY**: Use the Google Search tool to research current market prices for comparable copies (same edition, similar condition). Look for "sold" listings if possible, or current competitive listings.
-3. Determine a competitive list price (in EUR).
-4. Provide a confidence score (0.0 - 1.0) and a brief reasoning.
+1. Analyze the book's details and condition report.
+2. Estimate a competitive list price (in EUR) based on your knowledge of similar books, editions, and their market value.
+3. Consider the condition heavily in your valuation.
+4. Provide a confidence score (0.0 - 1.0) and a brief reasoning explaining how you arrived at this estimate (e.g., "First edition, good condition, highly collectible").
 
 **Output Format:**
 Return valid JSON only. Do not wrap the response in markdown code blocks. Do not include any text outside the JSON object.
@@ -249,7 +250,7 @@ Return valid JSON only. Do not wrap the response in markdown code blocks. Do not
   "price": <float, e.g. 24.99>,
   "confidence": <float, 0.0-1.0>,
   "reasoning": "<concise explanation>",
-  "sources": ["<url1>", "<url2>"]
+  "sources": []
 }}
 """
 
@@ -259,27 +260,26 @@ Return valid JSON only. Do not wrap the response in markdown code blocks. Do not
     contents.append(prompt)
     
     # Add Images
-    # Note: For Search tool, we can still provide image context.
-    # We should ideally fetch images and pass as bytes or GCS URI for Gemini 2.5
-    images_to_use = image_urls or book_data.get('imageUrls', [])
-    
-    for img_url in images_to_use:
-        if img_url and img_url.startswith('gs://'):
-            contents.append(types.Part.from_uri(file_uri=img_url, mime_type="image/jpeg"))
-        elif img_url and (img_url.startswith('http://') or img_url.startswith('https://')):
-            # Note: Directly passing URLs is not supported in from_uri,
-            # for simplicity in this migration we skip or would need to fetch.
-            # Usually images are in GCS (gs://) in this project.
-            pass
+    # SIMPLIFICATION (2025-02-13): Removing images from pricing request to avoid 400 Bad Request errors.
+    # The condition assessor has already processed the images, and we have the text metadata.
+    # Relying solely on text metadata + condition report for pricing search is more robust and cheaper.
+    logger.info("Skipping image inclusion for pricing request to improve stability and avoid Vertex AI 400 errors.")
+    # images_to_use = image_urls or book_data.get('imageUrls', [])
+    # for img_url in images_to_use:
+    #     if img_url and img_url.startswith('gs://'):
+    #         contents.append(types.Part.from_uri(file_uri=img_url, mime_type="image/jpeg"))
 
-    # Prepare Request config with Google Search tool
+
+    # Prepare Request config WITHOUT Google Search tool (Stability Fix)
+    # We rely on internal knowledge to avoid Runtime/Retry errors with the Search tool.
+    
     config = types.GenerateContentConfig(
         temperature=0.1,
-        tools=[types.Tool(google_search=types.GoogleSearch())],
+        # tools=[types.Tool(google_search=types.GoogleSearch())], # DISABLED for stability
         response_mime_type="application/json"
     )
     
-    logger.info(f"Sending pricing request to {GEMINI_MODEL_PRICE} for {book_id} (Images: {len(images_to_use)})")
+    logger.info(f"Sending pricing request to {GEMINI_MODEL_PRICE} for {book_id}")
     
     response = client.models.generate_content(
         model=GEMINI_MODEL_PRICE,
@@ -289,6 +289,11 @@ Return valid JSON only. Do not wrap the response in markdown code blocks. Do not
     
     # Parse Response
     try:
+        # Check if response has text (it might be blocked or empty)
+        if not response.text:
+            logger.error(f"Empty response from LLM. Finish reason: {response.finish_reason}")
+            raise ValueError("Empty response from LLM")
+
         data = _parse_json(response.text)
         
         # Validation

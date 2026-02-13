@@ -1,32 +1,32 @@
-# Projekt Status - 09.02.2026
+# Projekt Status
 
-## Aktueller Stand: VOLL FUNKTIONSFÄHIG 🟢
+## Aktueller Stand: STABILISIERUNGSPHASE 🟢 (Stable)
 
-### Durchgeführte Fixes & Updates:
+### Update: 13.02.2026 - Stability & Robustness
 
-1.  **Confidence Scoring Fix:**
-    - Der `ingestion-agent` hat den Confidence-Score von Gemini teilweise ignoriert oder falsch gemappt (Key-Mismatch `confidence` vs `confidence_score`).
-    - Fix in `source/shared/simplified_ingestion/core.py`: Robuste Suche nach Score-Keys und Normalisierung von Prozentwerten.
+Das System wurde gegen "gesprächige" LLM-Antworten und API-Eigenheiten in der Region europe-west1 gehärtet.
 
-2.  **Pipeline Trigger Reparatur:**
-    - **Topic Mismatch:** Der `ingestion-agent` hat an ein falsches Pub/Sub-Topic gesendet.
-    - **Lösung:** Topic auf `condition-assessment-jobs` korrigiert.
-    - **Zusatz:** Parallel-Trigger für `price-research-requests` eingebaut.
-    - **Eventarc:** Manuellen Trigger für den `price-research-agent` erstellt.
+**Details:** [FIX_LOG_2026-02-13.md](docs/archive/FIX_LOG_2026-02-13.md)
 
-3.  **Build & Dependency Fixes:**
-    - Inkompatible Dependencies zwischen `shared` und `agents` aufgelöst.
-    - `setup.py` entschärft (keine redundanten `install_requires` mehr).
-    - `requirements.txt` im `ingestion-agent` für Cloud Run optimiert.
+### Status der Komponenten
 
-4.  **Dashboard UI Refactor:**
-    - `BookList.jsx` runderneuert (Tailwind UI).
-    - Korrektes Mapping von bibliografischen Daten (Autor, Verlag, ISBN, Jahr).
-    - Anzeige von KI-Begründungen und Marktwerten integriert.
+- **Ingestion Agent:** 🟢 **Stable** (Robust JSON Parsing implementiert)
+- **Condition Assessor:** 🟢 **Stable** (Race Conditions behoben)
+- **Strategist Agent (Pricing):** 🟢 **Stable** (Fallback Mode - Internal Knowledge Only)
+- **Scout Agent (Marketplace):** ⚪ Geplant
+- **Dashboard:** 🟢 **Stable**
 
-### Nächste Schritte:
-- Weitere Plattformen für das Listing anbinden (Ebay-Integration ist vorbereitet).
-- Bulk-Upload Performance-Tests.
+### Nächste Schritte
+
+1.  **Re-enable Google Search Tool:** Wiederaktivierung der Live-Preissuche, sobald API in europe-west1 stabil (aktuell Fallback auf Internal Knowledge).
+2.  **Marketplace Integration:** Implementierung des Scout Agents für eBay/Kleinanzeigen Listing.
+3.  **End-to-End Test:** Vollständiger Durchlauf mit physischen Büchern.
 
 ---
-*Dokumentiert von Harald dem Hacker* 🕵️‍♂️💻
+
+### Historie
+
+#### Update: 09.02.2026 - VOLL FUNKTIONSFÄHIG 🟢
+- Confidence Scoring Fix
+- Pipeline Trigger Reparatur
+- Dashboard UI Refactor
