@@ -22,6 +22,7 @@
     "@tailwindcss/postcss": "^4.1.16",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.21",
+    "firebase-tools": "^15.6.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.16",
     "vite": "^5.2.0"

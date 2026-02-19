@@ -1,0 +1,12 @@
+.git
+.gitignore
+node_modules/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+test-results/
+export_bookflow/
+dashboard/frontend/dist/
+coverage/
+.pytest_cache/

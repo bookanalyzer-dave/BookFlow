@@ -411,6 +411,7 @@ async def ingest_book_with_gemini(
             
             # Strategie 1: Suche nach Markdown Code-Blöcken (z.B. ```json ... ```)
             # Wir nehmen den LETZTEN Block, da Modelle oft erst ein Beispiel zeigen und dann das Ergebnis.
+            # Regex verbessert: Erlaubt optional json Tag, ignoriert Whitespace, non-greedy match für Inhalt
             code_block_pattern = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
             matches = code_block_pattern.findall(result_text)
             

@@ -25,10 +25,10 @@ const ConditionAssessment = ({ bookId, onAssessmentComplete }) => {
   ];
 
   const imageTypes = [
-    { value: 'cover', label: 'Buchcover', description: 'Vorderseite des Buchs' },
-    { value: 'spine', label: 'Buchrücken', description: 'Seitliche Ansicht des Buchs' },
-    { value: 'pages', label: 'Buchseiten', description: 'Innenseiten des Buchs' },
-    { value: 'binding', label: 'Bindung', description: 'Bindungsbereich des Buchs' }
+    { value: 'cover', label: 'Buchcover', description: 'Vorderseite' },
+    { value: 'spine', label: 'Buchrücken', description: 'Seitliche Ansicht' },
+    { value: 'pages', label: 'Buchseiten', description: 'Innenseiten' },
+    { value: 'binding', label: 'Bindung', description: 'Bindungsbereich' }
   ];
 
   // Sync hook data to local state
@@ -99,7 +99,6 @@ const ConditionAssessment = ({ bookId, onAssessmentComplete }) => {
       }
 
       const result = await response.json();
-      // The hook will update the state via Firestore listener, but we can set it here too for immediate feedback
       setAssessment(result.condition_assessment);
       setStatus('complete');
       
@@ -171,13 +170,13 @@ const ConditionAssessment = ({ bookId, onAssessmentComplete }) => {
 
   const getGradeColor = (grade) => {
     const colors = {
-      'Fine': 'text-green-600 bg-green-50',
-      'Very Fine': 'text-green-500 bg-green-50',
-      'Good': 'text-yellow-600 bg-yellow-50',
-      'Fair': 'text-orange-600 bg-orange-50',
-      'Poor': 'text-red-600 bg-red-50'
+      'Fine': 'text-green-700 bg-green-50 border-green-200',
+      'Very Fine': 'text-emerald-700 bg-emerald-50 border-emerald-200',
+      'Good': 'text-yellow-700 bg-yellow-50 border-yellow-200',
+      'Fair': 'text-orange-700 bg-orange-50 border-orange-200',
+      'Poor': 'text-red-700 bg-red-50 border-red-200'
     };
-    return colors[grade] || 'text-gray-600 bg-gray-50';
+    return colors[grade] || 'text-gray-700 bg-gray-50 border-gray-200';
   };
 
   const getConfidenceColor = (confidence) => {
@@ -187,32 +186,55 @@ const ConditionAssessment = ({ bookId, onAssessmentComplete }) => {
   };
 
   if (hookLoading && !assessment) {
-      return <div className="p-6 text-center text-gray-500">Lade Bewertung...</div>;
+      return (
+        <div className="p-12 flex flex-col items-center justify-center text-gray-400">
+           <svg className="animate-spin h-8 w-8 text-blue-500 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+           <p className="text-sm font-medium">Lade Bewertung...</p>
+        </div>
+      );
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-4 sm:p-6 bg-white rounded-lg shadow-lg my-4 sm:my-8">
-      <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6">
-        Buchzustand-Bewertung
+    <div className="max-w-4xl mx-auto p-6 sm:p-8 bg-white rounded-2xl shadow-xl shadow-gray-200/50 border border-gray-100 my-8">
+      <h2 className="text-2xl font-extrabold text-gray-900 mb-6 tracking-tight">
+        Zustandsbewertung
       </h2>
 
       {/* Image Upload Section */}
-      <div className="mb-8">
-        <h3 className="text-lg font-semibold mb-4">Bilder für Bewertung hochladen</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="mb-10">
+        <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+           <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs font-bold">1</span>
+           Bilder hochladen
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {imageTypes.map((type) => (
-            <div key={type.value} className="border-2 border-dashed border-gray-300 rounded-lg p-4">
+            <div key={type.value} className={`relative group border-2 border-dashed rounded-xl p-4 transition-all duration-200 ${images.find(img => img.type === type.value) ? 'border-green-300 bg-green-50/30' : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/30'}`}>
               <div className="text-center">
-                <h4 className="font-medium text-gray-700">{type.label}</h4>
-                <p className="text-sm text-gray-500 mb-3">{type.description}</p>
+                <h4 className="font-semibold text-gray-900 mb-1">{type.label}</h4>
+                <p className="text-xs text-gray-500 mb-4">{type.description}</p>
+                
                 <input
                   type="file"
                   accept="image/*"
+                  id={`file-${type.value}`}
                   onChange={(e) => handleImageChange(e, type.value)}
-                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                  className="hidden"
                 />
-                {images.find(img => img.type === type.value) && (
-                  <p className="text-green-600 text-sm mt-2">✓ Bild hochgeladen</p>
+                
+                {images.find(img => img.type === type.value) ? (
+                  <div className="flex items-center justify-center gap-2 text-green-700 bg-green-100 px-3 py-1.5 rounded-lg text-sm font-medium mx-auto w-fit">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                    Bereit
+                    <label htmlFor={`file-${type.value}`} className="absolute inset-0 cursor-pointer" title="Ändern"></label>
+                  </div>
+                ) : (
+                  <label 
+                    htmlFor={`file-${type.value}`}
+                    className="cursor-pointer inline-flex items-center gap-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                    Auswählen
+                  </label>
                 )}
               </div>
             </div>
@@ -222,69 +244,81 @@ const ConditionAssessment = ({ bookId, onAssessmentComplete }) => {
 
       {/* Assessment Button */}
       {!assessment && (
-        <div className="mb-6">
+        <div className="mb-8">
           <button
             onClick={handleAssessment}
             disabled={images.length === 0 || status === 'uploading' || status === 'assessing'}
-            className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg font-semibold disabled:bg-gray-400 disabled:cursor-not-allowed hover:bg-blue-700 transition-colors"
+            className={`w-full py-4 px-6 rounded-xl text-white font-bold text-lg shadow-lg transition-all transform duration-200 focus:outline-none focus:ring-4 focus:ring-offset-2 ${
+              images.length === 0 || status === 'uploading' || status === 'assessing'
+              ? 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none'
+              : 'bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 hover:-translate-y-0.5 shadow-blue-500/30 focus:ring-blue-500'
+            }`}
           >
             {status === 'uploading' && 'Bilder werden verarbeitet...'}
-            {status === 'assessing' && 'KI-Bewertung läuft...'}
-            {status === 'idle' && `Zustandsbewertung starten (${images.length} Bilder)`}
+            {status === 'assessing' && 'KI analysiert Zustand...'}
+            {status === 'idle' && `Jetzt bewerten (${images.length} Bilder)`}
           </button>
         </div>
       )}
 
       {/* Assessment Results */}
       {assessment && (
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold mb-4">Bewertungsergebnis</h3>
+        <div className="animate-fade-in-up">
+          <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+            <span className="flex items-center justify-center w-6 h-6 rounded-full bg-green-100 text-green-600 text-xs font-bold">2</span>
+            Ergebnis
+          </h3>
           
           {/* Overall Grade */}
-          <div className="bg-gray-50 rounded-lg p-6 mb-4">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <span className={`inline-block px-3 py-1 rounded-full text-sm font-semibold ${getGradeColor(assessment.grade)}`}>
-                  {assessment.grade}
-                </span>
-                <p className="text-2xl font-bold text-gray-800 mt-2">
-                  {assessment.overall_score?.toFixed(1)}%
-                </p>
+          <div className="bg-gray-50 rounded-2xl p-6 mb-6 border border-gray-100">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
+              <div className="flex items-center gap-4">
+                 <div className="flex flex-col items-center">
+                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Grade</span>
+                    <span className={`inline-block px-4 py-1.5 rounded-lg text-sm font-bold border shadow-sm ${getGradeColor(assessment.grade)}`}>
+                      {assessment.grade}
+                    </span>
+                 </div>
+                 <div className="h-10 w-px bg-gray-200"></div>
+                 <div className="flex flex-col items-center">
+                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Score</span>
+                    <span className="text-2xl font-black text-gray-900">{assessment.overall_score?.toFixed(0)}%</span>
+                 </div>
               </div>
+              
               <div className="text-right">
-                <p className="text-sm text-gray-600">Vertrauen</p>
-                <p className={`text-lg font-semibold ${getConfidenceColor(assessment.confidence)}`}>
-                  {(assessment.confidence * 100)?.toFixed(1)}%
-                </p>
+                <span className="text-xs font-medium text-gray-500 block mb-1">KI-Konfidenz</span>
+                <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-gray-200 shadow-sm ${getConfidenceColor(assessment.confidence)}`}>
+                   <div className={`w-2 h-2 rounded-full ${assessment.confidence >= 0.8 ? 'bg-green-500' : assessment.confidence >= 0.6 ? 'bg-yellow-500' : 'bg-red-500'}`}></div>
+                   <span className="font-bold text-sm">{(assessment.confidence * 100)?.toFixed(0)}%</span>
+                </div>
               </div>
             </div>
 
             {assessment.manual_override && (
-              <div className="bg-yellow-100 border-l-4 border-yellow-500 p-4 mt-4">
-                <p className="text-yellow-700 font-medium">Manuelle Übersteuerung aktiv</p>
-                <p className="text-yellow-600 text-sm">{assessment.override_reason}</p>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mt-6 flex gap-3">
+                <svg className="w-5 h-5 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                <div>
+                   <p className="text-amber-900 font-bold text-sm">Manuell korrigiert</p>
+                   <p className="text-amber-800 text-sm mt-1">{assessment.override_reason}</p>
+                </div>
               </div>
             )}
           </div>
 
           {/* Component Scores */}
           {assessment.component_scores && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
               {Object.entries(assessment.component_scores).map(([component, score]) => (
-                <div key={component} className="bg-white border rounded-lg p-4">
-                  <h4 className="font-medium text-gray-700 capitalize mb-2">
-                    {imageTypes.find(type => type.value === component)?.label || component}
-                  </h4>
-                  <div className="flex items-center">
-                    <div className="flex-1 bg-gray-200 rounded-full h-2 mr-3">
-                      <div
-                        className="bg-blue-600 h-2 rounded-full"
-                        style={{ width: `${score}%` }}
-                      ></div>
-                    </div>
-                    <span className="text-sm font-medium text-gray-600">
-                      {score?.toFixed(1)}%
-                    </span>
+                <div key={component} className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+                  <div className="flex justify-between items-center mb-2">
+                    <h4 className="font-semibold text-gray-700 capitalize text-sm">
+                      {imageTypes.find(type => type.value === component)?.label || component}
+                    </h4>
+                    <span className="text-sm font-bold text-gray-900">{score?.toFixed(0)}%</span>
+                  </div>
+                  <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                    <div className="bg-blue-500 h-2 rounded-full transition-all duration-500" style={{ width: `${score}%` }}></div>
                   </div>
                 </div>
               ))}
@@ -293,15 +327,17 @@ const ConditionAssessment = ({ bookId, onAssessmentComplete }) => {
 
           {/* Detailed Analysis */}
           {assessment.details && (
-            <div className="bg-white border rounded-lg p-4 mb-4">
-              <h4 className="font-medium text-gray-700 mb-3">Detailanalyse</h4>
-              <div className="space-y-2">
+            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-6">
+              <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                <h4 className="font-bold text-gray-900 text-sm">KI-Detailanalyse</h4>
+              </div>
+              <div className="p-4 space-y-3">
                 {Object.entries(assessment.details).map(([key, value]) => (
-                  <div key={key} className="flex justify-between text-sm">
-                    <span className="text-gray-600 capitalize">
-                      {key.replace(/_/g, ' ')}:
+                  <div key={key} className="flex flex-col sm:flex-row sm:justify-between text-sm gap-1 sm:gap-4 border-b border-gray-50 last:border-0 pb-2 last:pb-0">
+                    <span className="text-gray-500 capitalize font-medium whitespace-nowrap">
+                      {key.replace(/_/g, ' ')}
                     </span>
-                    <span className="text-gray-800">{value}</span>
+                    <span className="text-gray-900 font-medium text-right">{value}</span>
                   </div>
                 ))}
               </div>
@@ -309,56 +345,59 @@ const ConditionAssessment = ({ bookId, onAssessmentComplete }) => {
           )}
 
           {/* Manual Override Section */}
-          <div className="border-t pt-4">
+          <div className="border-t border-gray-100 pt-6">
             {!manualOverride ? (
               <button
                 onClick={() => setManualOverride(true)}
-                className="text-blue-600 hover:text-blue-800 font-medium"
+                className="text-gray-500 hover:text-gray-900 text-sm font-medium flex items-center gap-2 transition-colors"
               >
-                Bewertung manuell korrigieren
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                Ergebnis korrigieren
               </button>
             ) : (
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h4 className="font-medium text-gray-700 mb-3">Manuelle Korrektur</h4>
+              <div className="bg-gray-50 rounded-xl p-6 border border-gray-200">
+                <h4 className="font-bold text-gray-900 mb-4">Manuelle Korrektur</h4>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-sm font-bold text-gray-700 mb-2">
                       Neue Bewertung
                     </label>
-                    <select
-                      value={overrideGrade}
-                      onChange={(e) => setOverrideGrade(e.target.value)}
-                      className="w-full border border-gray-300 rounded-md px-3 py-2"
-                    >
-                      <option value="">Bewertung auswählen</option>
-                      {conditionGrades.map((grade) => (
-                        <option key={grade.value} value={grade.value}>
-                          {grade.label} - {grade.description}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="relative">
+                      <select
+                        value={overrideGrade}
+                        onChange={(e) => setOverrideGrade(e.target.value)}
+                        className="block w-full pl-3 pr-10 py-3 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-lg shadow-sm"
+                      >
+                        <option value="">Bitte wählen...</option>
+                        {conditionGrades.map((grade) => (
+                          <option key={grade.value} value={grade.value}>
+                            {grade.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-sm font-bold text-gray-700 mb-2">
                       Begründung
                     </label>
                     <textarea
                       value={overrideReason}
                       onChange={(e) => setOverrideReason(e.target.value)}
-                      placeholder="Grund für die Korrektur..."
-                      className="w-full border border-gray-300 rounded-md px-3 py-2 h-20"
+                      placeholder="Warum weicht Ihre Einschätzung ab?"
+                      className="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-lg p-3 min-h-[100px]"
                     />
                   </div>
-                  <div className="flex space-x-3">
+                  <div className="flex gap-3 pt-2">
                     <button
                       onClick={handleManualOverride}
-                      className="bg-orange-600 text-white px-4 py-2 rounded-md hover:bg-orange-700"
+                      className="bg-gray-900 text-white px-5 py-2.5 rounded-lg text-sm font-bold hover:bg-black transition-colors shadow-sm"
                     >
-                      Korrektur anwenden
+                      Korrektur speichern
                     </button>
                     <button
                       onClick={() => setManualOverride(false)}
-                      className="bg-gray-400 text-white px-4 py-2 rounded-md hover:bg-gray-500"
+                      className="bg-white text-gray-700 border border-gray-300 px-5 py-2.5 rounded-lg text-sm font-bold hover:bg-gray-50 transition-colors"
                     >
                       Abbrechen
                     </button>
@@ -372,20 +411,19 @@ const ConditionAssessment = ({ bookId, onAssessmentComplete }) => {
 
       {/* Error Display */}
       {error && (
-        <div className="bg-red-100 border-l-4 border-red-500 p-4 mb-4">
-          <p className="text-red-700">{error}</p>
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex gap-3 text-red-800">
+           <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+           <p className="font-medium">{error}</p>
         </div>
       )}
 
       {/* Status Display */}
       {status === 'assessing' && (
-        <div className="bg-blue-100 border-l-4 border-blue-500 p-4">
-          <div className="flex items-center">
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-3"></div>
-            <p className="text-blue-700">
-              KI-basierte Zustandsbewertung wird durchgeführt...
-            </p>
-          </div>
+        <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex gap-3 text-blue-800 animate-pulse">
+          <svg className="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+          <p className="font-bold">
+            KI-basierte Zustandsbewertung wird durchgeführt...
+          </p>
         </div>
       )}
     </div>

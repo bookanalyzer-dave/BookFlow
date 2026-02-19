@@ -13,6 +13,7 @@ from typing import List, Optional, Dict, Any, Union, Annotated
 from datetime import datetime
 import logging
 import re
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,35 @@ class BookData(BaseModel):
     # Debug / Metadata
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Zusätzliche Metadaten und Debug-Infos")
     
+    @field_validator('publisher', 'edition', 'binding_type', mode='before')
+    @classmethod
+    def robust_string_conversion(cls, v: Any) -> Optional[str]:
+        """
+        Konvertiert komplexe Inputs (Dicts, Listen) robust in Strings.
+        Gemini gibt manchmal Objekte zurück, wo Strings erwartet werden.
+        """
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        if isinstance(v, (int, float)):
+            return str(v)
+        if isinstance(v, list):
+            # Nimm das erste Element oder joine
+            filtered = [str(x) for x in v if x]
+            return ", ".join(filtered) if filtered else None
+        if isinstance(v, dict):
+            # Versuche typische Keys zu finden
+            for key in ['name', 'value', 'text', 'content', 'label']:
+                if key in v and v[key]:
+                    return str(v[key])
+            # Fallback: JSON String
+            try:
+                return json.dumps(v, ensure_ascii=False)
+            except:
+                return str(v)
+        return str(v)
+
     @field_validator('isbn_13')
     @classmethod
     def validate_isbn_13(cls, v: Optional[str]) -> Optional[str]:
@@ -158,7 +188,10 @@ class BookData(BaseModel):
         if v is None:
             return v
         cleaned = v.replace('-', '').replace(' ', '')
-        if len(cleaned) != 13 or not cleaned.isdigit():
+        # Robustheit: Extrahiere nur Ziffern falls "ISBN: 978..." kommt
+        cleaned = re.sub(r'\D', '', cleaned)
+        
+        if len(cleaned) != 13:
             logger.warning(f"Invalid ISBN-13 format: {v}")
             return None
         return cleaned
@@ -170,6 +203,14 @@ class BookData(BaseModel):
         if v is None:
             return v
         cleaned = v.replace('-', '').replace(' ', '')
+        # Robustheit: Extrahiere nur Ziffern falls "ISBN: 3..." kommt
+        # Achtung: ISBN-10 kann 'X' am Ende haben
+        if cleaned.endswith('X') or cleaned.endswith('x'):
+            digits = re.sub(r'\D', '', cleaned[:-1])
+            cleaned = digits + 'X'
+        else:
+             cleaned = re.sub(r'\D', '', cleaned)
+
         if len(cleaned) != 10:
             logger.warning(f"Invalid ISBN-10 format: {v}")
             return None

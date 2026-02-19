@@ -97,7 +97,7 @@ class PriceGroundingClient:
             automatic_function_calling={'disable': False, 'maximum_remote_calls': 10},
             temperature=self.config.temperature,
             max_output_tokens=self.config.max_output_tokens,
-            response_mime_type="application/json",
+            # response_mime_type="application/json", # DISABLED: Conflict with Search Tool (Error 400)
             safety_settings=[
                 types.SafetySetting(
                     category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,

@@ -5,143 +5,239 @@ Koordiniert Preis-Recherche über multiple Quellen und führt intelligente Fusio
 
 import logging
 import asyncio
+import json
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 from google.cloud import firestore
-from shared.apis.price_grounding import PriceGroundingClient, PriceData
+from google import genai
+from google.genai import types
+
+# Lokale Module (Shared)
+from shared.apis.price_grounding import PriceGroundingClient, PriceData, MarketQueryResult
+from shared.price_research.models import MarketAnalysis, CompetitorOffer, MarketStrategy, PriceRange
 
 logger = logging.getLogger(__name__)
 
 class PriceResearchOrchestrator:
-    """Orchestriert Multi-Source Price Research."""
+    """Orchestriert Multi-Source Price Research und KI-gestützte Preisfindung."""
     
-    def __init__(self, db: firestore.Client, grounding_client: PriceGroundingClient):
+    def __init__(self, db: firestore.Client, grounding_client: PriceGroundingClient, project_id: str, location: str = "us-central1"):
         self.db = db
         self.grounding = grounding_client
-    
-    async def research_price(
+        self.project_id = project_id
+        self.location = location
+        
+        # Initialisierung Gemini Client für Analyse (nicht Suche)
+        self.analysis_client = genai.Client(
+            vertexai=True,
+            project=self.project_id,
+            location=self.location
+        )
+
+    async def research_and_price(
         self, 
         isbn: str, 
         title: str, 
-        book_id: str,
-        uid: str
-    ) -> Dict:
+        book_id: str, 
+        uid: str,
+        condition_report: Dict = None  # Das KI-Gutachten vom Condition Assessor
+    ) -> MarketAnalysis:
         """
-        Hauptfunktion: Recherchiert Preise über alle Quellen.
+        Hauptfunktion:
+        1. Recherchiert echte Marktpreise (Grounding).
+        2. Analysiert die Situation (Konkurrenz vs. eigener Zustand).
+        3. Gibt den optimalen Preis zurück.
         """
-        # 1. Zusätzliche Metadaten aus Firestore abrufen für genaueres Grounding
-        author = None
-        publisher = None
-        year = None
-        edition = None
         
+        # 1. Metadaten laden (Autor, Verlag etc.)
+        metadata = await self._fetch_book_metadata(uid, book_id)
+        # Update isbn/title falls nötig
+        if not isbn and metadata.get('isbn'): isbn = metadata.get('isbn')
+        if not title and metadata.get('title'): title = metadata.get('title')
+
+        # SECURITY CHECK: Haben wir überhaupt eine ISBN?
+        if not isbn or len(isbn) < 10:
+            logger.warning(f"⚠️ Keine gültige ISBN für {book_id} gefunden. Abbruch des Groundings.")
+            return MarketAnalysis(
+                recommended_price=0.0,
+                min_price_limit=0.0,
+                strategy_used=MarketStrategy.BALANCED,
+                confidence=0.0,
+                competitor_count=0,
+                market_price_range=PriceRange(min_price=0, max_price=0, avg_price=0),
+                reasoning="ISBN fehlt oder ungültig. Automatische Preisrecherche nicht möglich.",
+                internal_notes="Missing ISBN"
+            )
+
+        # 2. Marktdaten abrufen (Cache first, dann API)
+        market_data = await self._get_market_data(isbn, title, metadata)
+        
+        if not market_data or not market_data.offers:
+            logger.warning(f"⚠️ Keine Marktangebote für {isbn} gefunden. Nutze Fallback-Strategie.")
+            # Fallback: Wenn wir GAR NICHTS finden -> Konservativer Startpreis oder Manuelle Prüfung?
+            # Wir geben eine 'Safe' Analysis zurück
+            return MarketAnalysis(
+                recommended_price=0.0,
+                min_price_limit=0.0,
+                strategy_used=MarketStrategy.BALANCED,
+                confidence=0.0,
+                competitor_count=0,
+                market_price_range=PriceRange(min_price=0, max_price=0, avg_price=0),
+                reasoning="Keine Marktdaten gefunden. Manuelle Prüfung empfohlen.",
+                internal_notes="Grounding lieferte keine Ergebnisse."
+            )
+
+        # 3. KI-Analyse: Zustand vs. Markt -> Preis
+        analysis = await self._analyze_market_situation(market_data, condition_report, title, metadata)
+        
+        # 4. Speichern (Historie)
+        await self._store_analysis_result(uid, book_id, analysis, market_data)
+
+        return analysis
+
+    async def _analyze_market_situation(
+        self, 
+        market_data: MarketQueryResult, 
+        condition_report: Dict, 
+        title: str,
+        metadata: Dict
+    ) -> MarketAnalysis:
+        """
+        Nutzt Gemini 2.5 Flash, um die rohen Marktdaten zu interpretieren.
+        Entscheidet: Sind wir besser als die Konkurrenz? Können wir mehr verlangen?
+        """
+        
+        # Daten für Prompt aufbereiten
+        offers_summary = [
+            f"- {o.seller} ({o.platform}): {o.price_eur}€ (Zustand: {o.condition})" 
+            for o in market_data.offers[:10] # Top 10 reichen
+        ]
+        
+        my_condition = condition_report.get('grade', 'Unbekannt') if condition_report else "Gut (Standard)"
+        my_defects = condition_report.get('defects', []) if condition_report else []
+        
+        prompt = f"""
+        Du bist ein professioneller Buchhändler-Algorithmus. Deine Aufgabe: Den optimalen Verkaufspreis ermitteln.
+
+        BUCH:
+        Titel: {title}
+        Autor: {metadata.get('author', 'Unbekannt')}
+        Verlag: {metadata.get('publisher', 'Unbekannt')} (Jahr: {metadata.get('year', 'Unbekannt')})
+
+        UNSER EXEMPLAR:
+        Zustand: {my_condition}
+        Mängel: {", ".join(my_defects) if my_defects else "Keine nennenswerten Mängel."}
+
+        MARKTLAGE (Konkurrenz):
+        {chr(10).join(offers_summary)}
+
+        DYNAMIK:
+        - Wenn unser Zustand BESSER ist als der billigste Konkurrent -> Preis höher ansetzen.
+        - Wenn unser Zustand SCHLECHTER ist -> Preis niedriger (oder Liquidations-Strategie).
+        - Floor Price: Niemals unter 2.50€ (wegen Gebühren/Versand), außer es ist Schrott.
+        
+        AUFGABE:
+        Erstelle eine JSON-Analyse gemäß Schema `MarketAnalysis`.
+        """
+
+        # Gemini Config für Structured Output (Pydantic!)
+        config = types.GenerateContentConfig(
+            temperature=0.1,
+            response_mime_type="application/json",
+            response_schema=MarketAnalysis # Hier kommt Pydantic ins Spiel!
+        )
+
         try:
-            # Nutze asyncio.to_thread für den synchronen Firestore-Aufruf
-            book_doc = await asyncio.to_thread(
-                lambda: self.db.collection('users').document(uid).collection('books').document(book_id).get()
+            response = await self.analysis_client.aio.models.generate_content(
+                model="gemini-2.5-flash", # Schnell & Smart
+                contents=prompt,
+                config=config
             )
             
-            if book_doc.exists:
-                b_data = book_doc.to_dict()
-                # Extrahiere Metadaten (Feldnamen basierend auf Ingestion Agent)
-                authors_list = b_data.get('authors', [])
-                if authors_list and isinstance(authors_list, list):
-                    author = authors_list[0]
-                elif b_data.get('author'):
-                    author = b_data.get('author')
-                
-                publisher = b_data.get('publisher')
-                year = b_data.get('publication_year')
-                edition = b_data.get('edition')
-                
-                # Update isbn/title falls sie im PubSub fehlten aber im Doc sind
-                if not isbn: isbn = b_data.get('isbn')
-                if not title: title = b_data.get('title')
-                
-                logger.info(f"📖 Zusätzliche Metadaten für {book_id} geladen: Author={author}, Publisher={publisher}, Year={year}")
-        except Exception as e:
-            logger.warning(f"⚠️ Konnte Metadaten für Buch {book_id} nicht laden: {e}")
-
-        # 2. Cache Check
-        cached = await self._check_cache(isbn)
-        if cached:
-            logger.info(f"💾 Cache hit for ISBN {isbn}")
-            return cached
-        
-        # 3. Query Gemini Grounding mit allen verfügbaren Metadaten
-        result = await self.grounding.search_market_prices(
-            isbn=isbn, 
-            title=title,
-            author=author,
-            publisher=publisher,
-            year=year,
-            edition=edition
-        )
-        
-        # 4. Simplify result for Orchestrator (Storage focus)
-        # Orchestrator now only passes through raw data + Gemini analysis
-        analyzed = {
-            "offers_count": len(result.offers),
-            "confidence_score": result.confidence_score,
-            "ai_reasoning": result.reasoning,
-            "sources": list(set(p.platform for p in result.offers)),
-            "top_offers": [
-                {
-                    "seller": p.seller,
-                    "price_eur": p.price_eur,
-                    "condition": p.condition,
-                    "platform": p.platform,
-                    "url": p.url
-                } for p in result.offers[:10]
-            ]
-        }
-        
-        # 5. Store in Firestore
-        if result.offers:
-            await self._store_results(isbn, book_id, uid, analyzed, result.offers)
-        
-        analyzed['cached'] = False
-        return analyzed
-    
-    async def _check_cache(self, isbn: str, max_age_days: int = 7) -> Optional[Dict]:
-        """Prüft Firestore Cache für market_data."""
-        one_week_ago = datetime.utcnow() - timedelta(days=max_age_days)
-        
-        def _query_cache():
-            return self.db.collection('market_data')\
-                .where(filter=firestore.FieldFilter('isbn', '==', isbn))\
-                .where(filter=firestore.FieldFilter('timestamp', '>', one_week_ago))\
-                .order_by('timestamp', direction=firestore.Query.DESCENDING)\
-                .limit(1)\
-                .get()
-
-        docs = await asyncio.to_thread(_query_cache)
+            # Pydantic Parsing übernimmt Gemini SDK (hoffentlich), sonst manuell
+            # Bei google-genai structured output bekommen wir oft direkt das Objekt oder Dict
+            # Wir parsen es sicherheitshalber aus dem Text
             
-        if docs:
-            data = docs[0].to_dict()
-            return {
-                "offers_count": data.get("offers_count"),
-                "confidence_score": data.get("confidence_score"),
-                "ai_reasoning": data.get("ai_reasoning"),
-                "sources": data.get("sources"),
-                "top_offers": data.get("top_offers"),
-                "cached": True
-            }
-        return None
+            text_result = response.text
+            # Manchmal ist es in ```json ... ``` verpackt
+            if "```json" in text_result:
+                text_result = text_result.split("```json")[1].split("```")[0].strip()
+            elif "```" in text_result:
+                text_result = text_result.split("```")[1].split("```")[0].strip()
+                
+            data = json.loads(text_result)
+            return MarketAnalysis(**data)
 
-    async def _store_results(self, isbn: str, book_id: str, uid: str, analyzed: Dict, all_offers: List[PriceData]):
-        """Speichert die Ergebnisse in Firestore."""
-        data = {
-            "isbn": isbn,
-            "bookId": book_id,
-            "userId": uid,
-            "offers_count": analyzed["offers_count"],
-            "confidence_score": analyzed["confidence_score"],
-            "ai_reasoning": analyzed.get("ai_reasoning"),
-            "sources": analyzed["sources"],
-            "top_offers": analyzed["top_offers"],
-            "timestamp": firestore.SERVER_TIMESTAMP,
-            "expires_at": datetime.utcnow() + timedelta(days=60) # TTL
-        }
-        
-        await asyncio.to_thread(lambda: self.db.collection('market_data').add(data))
+        except Exception as e:
+            logger.error(f"❌ Fehler bei der KI-Preisanalyse: {e}", exc_info=True)
+            # Fallback
+            return MarketAnalysis(
+                recommended_price=0.0,
+                min_price_limit=0.0,
+                strategy_used=MarketStrategy.BALANCED,
+                confidence=0.0,
+                competitor_count=len(market_data.offers),
+                market_price_range=PriceRange(min_price=0, max_price=0, avg_price=0),
+                reasoning=f"KI-Fehler: {str(e)}",
+                internal_notes="Fehler im LLM Call."
+            )
+
+    async def _get_market_data(self, isbn, title, metadata) -> Optional[MarketQueryResult]:
+        """Holt Marktdaten (Cache -> Grounding Client)."""
+        # 1. Cache Check (TODO: Implementieren, wenn nötig. Für jetzt: Immer frisch für Tests)
+        # 2. Live Suche
+        return await self.grounding.search_market_prices(
+            isbn=isbn,
+            title=title,
+            author=metadata.get('author'),
+            publisher=metadata.get('publisher'),
+            year=metadata.get('year'),
+            edition=metadata.get('edition')
+        )
+
+    async def _fetch_book_metadata(self, uid, book_id) -> Dict:
+        """Lädt Buchdaten aus Firestore (Autor, Verlag...)."""
+        try:
+            # Nutze asyncio.to_thread für blockierenden Firestore Call
+            doc = await asyncio.to_thread(
+                lambda: self.db.collection('users').document(uid).collection('books').document(book_id).get()
+            )
+            if doc.exists:
+                d = doc.to_dict()
+                
+                # Robust extraction of first author
+                authors = d.get('authors', [])
+                first_author = None
+                if isinstance(authors, list) and len(authors) > 0:
+                    first_author = authors[0]
+                elif isinstance(d.get('author'), str):
+                    first_author = d.get('author')
+                
+                return {
+                    'isbn': d.get('isbn'),
+                    'title': d.get('title'),
+                    'author': first_author or 'Unknown Author',
+                    'publisher': d.get('publisher'),
+                    'year': d.get('publication_year'),
+                    'edition': d.get('edition')
+                }
+        except Exception as e:
+            logger.warning(f"Fehler beim Laden der Metadaten: {e}")
+        return {}
+
+    async def _store_analysis_result(self, uid, book_id, analysis: MarketAnalysis, market_data: MarketQueryResult):
+        """Speichert das Ergebnis in der Sub-Collection 'price_analysis' des Buches."""
+        try:
+            data = analysis.model_dump()
+            data['timestamp'] = datetime.utcnow().isoformat()
+            data['raw_offers_count'] = len(market_data.offers)
+            
+            # Wir speichern es in einer separaten Collection, um das Buch-Dokument sauber zu halten
+            # und Historie zu ermöglichen
+            await asyncio.to_thread(
+                lambda: self.db.collection('users').document(uid).collection('books').document(book_id).collection('price_history').add(data)
+            )
+            logger.info(f"💾 Preisanalyse für {book_id} gespeichert.")
+        except Exception as e:
+            logger.error(f"Fehler beim Speichern der Analyse: {e}")
+
