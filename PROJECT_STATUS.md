@@ -2,19 +2,26 @@
 
 ## Aktueller Stand: STABILISIERUNGSPHASE 🟢 (Stable)
 
-### Update: 13.02.2026 - Stability & Robustness
+### Update: 18.02.2026 - Frontend Redesign & Gemini 2.5 Flash 🚀
 
-Das System wurde gegen "gesprächige" LLM-Antworten und API-Eigenheiten in der Region europe-west1 gehärtet.
+Massives Update der Benutzeroberfläche und Performance-Optimierung.
 
-**Details:** [FIX_LOG_2026-02-13.md](docs/archive/FIX_LOG_2026-02-13.md)
+**Neuerungen:**
+- **Frontend Overhaul:** Modernes UI-Design (Glasmorphismus), verbesserte Pricing-Cards und optimierter Upload-Flow.
+- **Gemini 2.5 Flash:** Migration des Pricing Agents auf Gemini 2.5 Flash für schnellere und präzisere Marktanalyse.
+- **US-Central1 Migration:** Strategist-Agent nach `us-central1` umgezogen, um Grounding-Limits in Europa zu umgehen.
+- **Backend Hardening:** Implementierung von atomarem Firestore-Locking zur Vermeidung von Race Conditions bei der Bepreisung.
 
 ### Status der Komponenten
 
-- **Ingestion Agent:** 🟢 **Stable** (Robust JSON Parsing implementiert)
-- **Condition Assessor:** 🟢 **Stable** (Race Conditions behoben)
-- **Strategist Agent (Pricing):** 🟢 **Stable** (Fallback Mode - Internal Knowledge Only)
-- **Scout Agent (Marketplace):** ⚪ Geplant
-- **Dashboard:** 🟢 **Stable**
+- **Ingestion Agent:** 🟢 **Stable** (Gemini 2.5 Flash Support)
+- **Condition Assessor:** 🟢 **Stable**
+- **Strategist Agent (Pricing):** 🟢 **Stable** (Deploys in us-central1 with Google Search Grounding)
+- **Dashboard:** 🟢 **Stable** (Modern Redesign)
+
+---
+
+### Update: 13.02.2026 - Stability & Robustness
 
 ### Nächste Schritte
 
