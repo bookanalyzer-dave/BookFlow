@@ -21,10 +21,11 @@ logger = logging.getLogger(__name__)
 class PriceResearchOrchestrator:
     """Orchestriert Multi-Source Price Research und KI-gestützte Preisfindung."""
     
-    def __init__(self, db: firestore.Client, grounding_client: PriceGroundingClient, project_id: str, location: str = "us-central1"):
+    def __init__(self, db: firestore.Client, grounding_client: PriceGroundingClient, project_id: str = None, location: str = "europe-west1"):
+        import os
         self.db = db
         self.grounding = grounding_client
-        self.project_id = project_id
+        self.project_id = project_id or os.environ.get("GCP_PROJECT", "project-52b2fab8-15a1-4b66-9f3")
         self.location = location
         
         # Initialisierung Gemini Client für Analyse (nicht Suche)
@@ -55,9 +56,9 @@ class PriceResearchOrchestrator:
         if not isbn and metadata.get('isbn'): isbn = metadata.get('isbn')
         if not title and metadata.get('title'): title = metadata.get('title')
 
-        # SECURITY CHECK: Haben wir überhaupt eine ISBN?
-        if not isbn or len(isbn) < 10:
-            logger.warning(f"⚠️ Keine gültige ISBN für {book_id} gefunden. Abbruch des Groundings.")
+        # SECURITY CHECK: Haben wir überhaupt eine ISBN oder einen Titel?
+        if not isbn and not title:
+            logger.warning(f"⚠️ Weder ISBN noch Titel für {book_id} gefunden. Abbruch des Groundings.")
             return MarketAnalysis(
                 recommended_price=0.0,
                 min_price_limit=0.0,
@@ -65,17 +66,16 @@ class PriceResearchOrchestrator:
                 confidence=0.0,
                 competitor_count=0,
                 market_price_range=PriceRange(min_price=0, max_price=0, avg_price=0),
-                reasoning="ISBN fehlt oder ungültig. Automatische Preisrecherche nicht möglich.",
-                internal_notes="Missing ISBN"
+                reasoning="Weder ISBN noch Titel vorhanden. Automatische Preisrecherche nicht möglich.",
+                internal_notes="Missing ISBN and Title"
             )
 
         # 2. Marktdaten abrufen (Cache first, dann API)
         market_data = await self._get_market_data(isbn, title, metadata)
         
         if not market_data or not market_data.offers:
-            logger.warning(f"⚠️ Keine Marktangebote für {isbn} gefunden. Nutze Fallback-Strategie.")
+            logger.warning(f"⚠️ Keine Marktangebote gefunden. Nutze Fallback-Strategie.")
             # Fallback: Wenn wir GAR NICHTS finden -> Konservativer Startpreis oder Manuelle Prüfung?
-            # Wir geben eine 'Safe' Analysis zurück
             return MarketAnalysis(
                 recommended_price=0.0,
                 min_price_limit=0.0,
@@ -154,12 +154,7 @@ class PriceResearchOrchestrator:
                 config=config
             )
             
-            # Pydantic Parsing übernimmt Gemini SDK (hoffentlich), sonst manuell
-            # Bei google-genai structured output bekommen wir oft direkt das Objekt oder Dict
-            # Wir parsen es sicherheitshalber aus dem Text
-            
             text_result = response.text
-            # Manchmal ist es in ```json ... ``` verpackt
             if "```json" in text_result:
                 text_result = text_result.split("```json")[1].split("```")[0].strip()
             elif "```" in text_result:
@@ -170,7 +165,6 @@ class PriceResearchOrchestrator:
 
         except Exception as e:
             logger.error(f"❌ Fehler bei der KI-Preisanalyse: {e}", exc_info=True)
-            # Fallback
             return MarketAnalysis(
                 recommended_price=0.0,
                 min_price_limit=0.0,
@@ -183,9 +177,6 @@ class PriceResearchOrchestrator:
             )
 
     async def _get_market_data(self, isbn, title, metadata) -> Optional[MarketQueryResult]:
-        """Holt Marktdaten (Cache -> Grounding Client)."""
-        # 1. Cache Check (TODO: Implementieren, wenn nötig. Für jetzt: Immer frisch für Tests)
-        # 2. Live Suche
         return await self.grounding.search_market_prices(
             isbn=isbn,
             title=title,
@@ -196,16 +187,12 @@ class PriceResearchOrchestrator:
         )
 
     async def _fetch_book_metadata(self, uid, book_id) -> Dict:
-        """Lädt Buchdaten aus Firestore (Autor, Verlag...)."""
         try:
-            # Nutze asyncio.to_thread für blockierenden Firestore Call
             doc = await asyncio.to_thread(
                 lambda: self.db.collection('users').document(uid).collection('books').document(book_id).get()
             )
             if doc.exists:
                 d = doc.to_dict()
-                
-                # Robust extraction of first author
                 authors = d.get('authors', [])
                 first_author = None
                 if isinstance(authors, list) and len(authors) > 0:
@@ -226,18 +213,25 @@ class PriceResearchOrchestrator:
         return {}
 
     async def _store_analysis_result(self, uid, book_id, analysis: MarketAnalysis, market_data: MarketQueryResult):
-        """Speichert das Ergebnis in der Sub-Collection 'price_analysis' des Buches."""
         try:
             data = analysis.model_dump()
             data['timestamp'] = datetime.utcnow().isoformat()
             data['raw_offers_count'] = len(market_data.offers)
             
-            # Wir speichern es in einer separaten Collection, um das Buch-Dokument sauber zu halten
-            # und Historie zu ermöglichen
             await asyncio.to_thread(
                 lambda: self.db.collection('users').document(uid).collection('books').document(book_id).collection('price_history').add(data)
             )
-            logger.info(f"💾 Preisanalyse für {book_id} gespeichert.")
+            
+            # AUCH ins Hauptdokument schreiben, damit das Frontend es sofort sieht
+            await asyncio.to_thread(
+                lambda: self.db.collection('users').document(uid).collection('books').document(book_id).update({
+                    'status': 'priced',
+                    'estimated_price': analysis.recommended_price,
+                    'price_confidence': analysis.confidence,
+                    'competitor_count': analysis.competitor_count
+                })
+            )
+            
+            logger.info(f"💾 Preisanalyse für {book_id} gespeichert (History & Main Doc).")
         except Exception as e:
             logger.error(f"Fehler beim Speichern der Analyse: {e}")
-
