@@ -27,7 +27,7 @@ steps:
     - 'managed'
     - '--no-allow-unauthenticated'
     - '--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest'
-    - '--set-env-vars=,GCP_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GCS_BUCKET_NAME=${PROJECT_ID}-book-images,VERTEX_AI_LOCATION=europe-west1'
+    - '--update-env-vars=,GCP_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GCS_BUCKET_NAME=${PROJECT_ID}-book-images,VERTEX_AI_LOCATION=europe-west1'
     - '--memory=2Gi'
 
 # Create Eventarc trigger (replaces old condition-assessment-jobs trigger)

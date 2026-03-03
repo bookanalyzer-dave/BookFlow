@@ -27,7 +27,7 @@ steps:
       - 'managed'
       - '--no-allow-unauthenticated'
       - '--set-secrets=EBAY_CONF_TOKEN=EBAY_CONF_TOKEN:latest,EBAY_DEV_ID=EBAY_DEV_ID:latest,EBAY_APP_ID=EBAY_APP_ID:latest,EBAY_CERT_ID=EBAY_CERT_ID:latest'
-      - '--set-env-vars=GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GCP_PROJECT=${PROJECT_ID},GCS_BUCKET_NAME=${PROJECT_ID}-book-images,VERTEX_AI_LOCATION=europe-west1'
+      - '--update-env-vars=GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GCP_PROJECT=${PROJECT_ID},GCS_BUCKET_NAME=${PROJECT_ID}-book-images,VERTEX_AI_LOCATION=europe-west1'
       - '--memory=1Gi'
 
   # Create Eventarc trigger for strategist completion
