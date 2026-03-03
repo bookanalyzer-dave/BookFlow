@@ -21,11 +21,21 @@ async def run_price_research(isbn: str, title: str, book_id: str, uid: str):
     grounding_client = PriceGroundingClient()
     price_orchestrator = PriceResearchOrchestrator(db, grounding_client)
     
-    await price_orchestrator.research_price(
+    # Der Condition-Assessor sollte idealerweise vorher gelaufen sein
+    condition_report = None
+    try:
+        doc = db.collection('users').document(uid).collection('condition_assessments').document(book_id).get()
+        if doc.exists:
+            condition_report = doc.to_dict()
+    except Exception as e:
+        logger.warning(f"Konnte Condition Report nicht laden: {e}")
+
+    await price_orchestrator.research_and_price(
         isbn=isbn,
         title=title,
         book_id=book_id,
-        uid=uid
+        uid=uid,
+        condition_report=condition_report
     )
 
 @functions_framework.cloud_event
@@ -42,15 +52,12 @@ def price_research_handler(cloud_event: CloudEvent) -> None:
         uid = message_data.get('uid')
         isbn = message_data.get('isbn')
         title = message_data.get('title', '')
-        authors = message_data.get('authors', [])
         
-        # We need either ISBN OR Title to do a search
-        if not all([book_id, uid]) or not (isbn or title):
-            logger.error(f"Missing required data (bookId, uid, or [isbn/title]) in message: {message_data}")
+        if not book_id or not uid:
+            logger.error(f"Missing required data in message: {message_data}")
             return
 
-        search_term = isbn if isbn else title
-        logger.info(f"🚀 Starting background price research for '{search_term}' (Book: {book_id})")
+        logger.info(f"🚀 Starting background price research for '{title}' (Book: {book_id})")
         
         # Run async logic
         asyncio.run(run_price_research(
@@ -60,7 +67,7 @@ def price_research_handler(cloud_event: CloudEvent) -> None:
             uid=uid
         ))
         
-        logger.info(f"✅ Background price research completed for '{search_term}'")
+        logger.info(f"✅ Background price research completed for {book_id}")
         
     except Exception as e:
         logger.error(f"❌ Error in price_research_handler: {str(e)}", exc_info=True)
