@@ -183,7 +183,7 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
                 
                 # 2. Trigger Price Research (wenn ISBN vorhanden)
                 isbn = final_data.get('isbn')
-                if price_topic_path and isbn:
+                if price_topic_path and (isbn or final_data.get('title')):
                     try:
                         payload = {"bookId": book_id, "uid": uid, "isbn": isbn, "title": final_data.get('title', '')}
                         data = json.dumps(payload).encode("utf-8")
