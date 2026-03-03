@@ -1,6 +1,6 @@
 """
 Price Grounding Client
-Nutzt Vertex AI Gemini 2.5 Pro mit Search Grounding für ISBN-basierte Preisrecherche.
+Nutzt Vertex AI Gemini 2.5 Pro mit Search Grounding für ISBN/Titel-basierte Preisrecherche.
 """
 
 import os
@@ -71,7 +71,7 @@ class PriceGroundingClient:
 
     async def search_market_prices(
         self, 
-        isbn: str, 
+        isbn: Optional[str] = None, 
         title: Optional[str] = None,
         author: Optional[str] = None,
         publisher: Optional[str] = None,
@@ -83,6 +83,10 @@ class PriceGroundingClient:
         Nutzt zusätzliche Metadaten (Autor, Verlag, etc.) für eine präzisere Zuordnung der Ausgabe.
         """
         
+        # Ensure we have at least ISBN or Title+Author
+        if not isbn and not title:
+            return MarketQueryResult(offers=[], confidence_score=0.0, reasoning="Missing search parameters (No ISBN or Title)")
+
         prompt = self._build_combined_search_prompt(
             isbn=isbn, 
             title=title, 
@@ -122,10 +126,12 @@ class PriceGroundingClient:
             ]
         )
 
+        search_identifier = isbn if isbn else title
+
         for attempt in range(self.config.retry_attempts + 1):
             try:
                 if attempt > 0:
-                    logger.info(f"Retrying search for ISBN {isbn} (Attempt {attempt}/{self.config.retry_attempts})")
+                    logger.info(f"Retrying search for {search_identifier} (Attempt {attempt}/{self.config.retry_attempts})")
                 
                 # Use aio for async call
                 response = await self.client.aio.models.generate_content(
@@ -134,12 +140,12 @@ class PriceGroundingClient:
                     config=generate_content_config
                 )
                 
-                return self._process_response(response, isbn)
+                return self._process_response(response, search_identifier)
 
             except Exception as e:
                 is_retryable = '429' in str(e) or 'quota' in str(e).lower() or 'resource exhausted' in str(e).lower()
                 if not is_retryable or attempt >= self.config.retry_attempts:
-                    logger.error(f"❌ Grounding search failed for ISBN {isbn} after {attempt} retries: {e}", exc_info=True)
+                    logger.error(f"❌ Grounding search failed for {search_identifier} after {attempt} retries: {e}", exc_info=True)
                     # Return empty result on failure to avoid crashing the flow
                     return MarketQueryResult(
                         offers=[],
@@ -152,12 +158,12 @@ class PriceGroundingClient:
 
         return MarketQueryResult(offers=[], confidence_score=0.0, reasoning="Max retries reached")
 
-    def _process_response(self, response: Any, isbn: str) -> MarketQueryResult:
+    def _process_response(self, response: Any, identifier: str) -> MarketQueryResult:
         """Parses the Gemini response using robust patterns."""
         result_text, finish_reason = self._get_response_text(response)
         
         if not result_text.strip():
-            logger.warning(f"⚠️ Empty response from Gemini Grounding for ISBN {isbn}. Finish reason: {finish_reason}")
+            logger.warning(f"⚠️ Empty response from Gemini Grounding for {identifier}. Finish reason: {finish_reason}")
             return MarketQueryResult(offers=[], confidence_score=0.0, reasoning=f"Empty response from AI (Reason: {finish_reason})")
 
         try:
@@ -179,9 +185,9 @@ class PriceGroundingClient:
                         platform=offer.get("platform", "unknown")
                     ))
                 except Exception as val_e:
-                    logger.error(f"Validation error for offer in ISBN {isbn}: {val_e}")
+                    logger.error(f"Validation error for offer in {identifier}: {val_e}")
             
-            logger.info(f"✅ Gemini Grounding found {len(all_prices)} prices for ISBN {isbn} with confidence {confidence_score}")
+            logger.info(f"✅ Gemini Grounding found {len(all_prices)} prices for {identifier} with confidence {confidence_score}")
             return MarketQueryResult(
                 offers=all_prices,
                 confidence_score=confidence_score,
@@ -189,12 +195,12 @@ class PriceGroundingClient:
             )
 
         except json.JSONDecodeError as e:
-            logger.error(f"❌ Failed to parse response for ISBN {isbn}. Error: {e}")
+            logger.error(f"❌ Failed to parse response for {identifier}. Error: {e}")
             # Try to debug by logging truncated text
             logger.error(f"❌ Problematic text (first 200 chars): {result_text[:200]}")
             return MarketQueryResult(offers=[], confidence_score=0.0, reasoning=f"JSON Parse Error: {str(e)}")
         except Exception as e:
-             logger.error(f"❌ Unexpected error processing response for ISBN {isbn}: {e}", exc_info=True)
+             logger.error(f"❌ Unexpected error processing response for {identifier}: {e}", exc_info=True)
              return MarketQueryResult(offers=[], confidence_score=0.0, reasoning=f"Processing Error: {str(e)}")
 
     def _get_response_text(self, response: Any) -> Tuple[str, Optional[str]]:
@@ -241,22 +247,41 @@ class PriceGroundingClient:
 
     def _build_combined_search_prompt(
         self, 
-        isbn: str, 
-        title: Optional[str],
+        isbn: Optional[str] = None, 
+        title: Optional[str] = None,
         author: Optional[str] = None,
         publisher: Optional[str] = None,
         year: Optional[int] = None,
         edition: Optional[str] = None
     ) -> str:
         """Erstellt einen optimierten Prompt für die Suche."""
-        context_parts = [f"ISBN: {isbn}"]
-        if title: context_parts.append(f"Titel: {title}")
+        context_parts = []
+        if isbn: context_parts.append(f"ISBN: {isbn}")
+        if title: context_parts.append(f"Titel: '{title}'")
         if author: context_parts.append(f"Autor: {author}")
         if publisher: context_parts.append(f"Verlag: {publisher}")
         if year: context_parts.append(f"Erscheinungsjahr: {year}")
         if edition: context_parts.append(f"Auflage/Ausgabe: {edition}")
             
         context = ", ".join(context_parts)
+        
+        search_instructions = ""
+        if isbn:
+            search_instructions = f"""
+        Suche gezielt nach der ISBN auf:
+        1. Eurobuch.com (Meta-Suche)
+        2. ZVAB.com
+        3. Booklooker.de
+        4. AbeBooks.de
+            """
+        else:
+            search_instructions = f"""
+        Da keine ISBN vorhanden ist, suche exakt nach dieser Kombination aus Titel und Autor auf:
+        1. ZVAB.com (Zentrales Verzeichnis Antiquarischer Bücher) - perfekt für alte Bücher ohne ISBN
+        2. Booklooker.de (Suche nach Titel + Autor)
+        3. AbeBooks.de
+        4. eBay.de (Kategorie Bücher)
+            """
             
         return f"""
         Recherchiere aktuelle Verkaufspreise für exakt diese Buchausgabe auf deutschen Online-Marktplätzen:
@@ -265,12 +290,9 @@ class PriceGroundingClient:
         Nutze die oben genannten Metadaten (Autor, Verlag, Jahr, Auflage), um sicherzustellen, dass nur Preise für diese spezifische Ausgabe zurückgegeben werden. 
         Dies ist besonders wichtig bei verschiedenen Editionen oder Einbänden des gleichen Titels.
 
-        Suche gezielt auf:
-        1. Eurobuch.com (Meta-Suche über 50+ Quellen) - URL: https://www.eurobuch.com/buch/isbn/{{isbn}}
-        2. ZVAB.com (Zentrales Verzeichnis Antiquarischer Bücher) - URL: https://www.zvab.com/servlet/SearchResults?isbn={{isbn}}
-        3. Booklooker.de
+        {search_instructions}
         
-        Fokus: Gebrauchte Bücher in verschiedenen Zuständen.
+        Fokus: Gebrauchte Bücher in verschiedenen Zuständen. Finde möglichst ALLE relevanten Online-Angebote für exakt dieses Buch.
         
         Extrahiere für jedes gefundene Angebot:
         - seller: Name des Händlers/Antiquariats
@@ -278,7 +300,7 @@ class PriceGroundingClient:
         - condition: Zustand (z.B. "Wie neu", "Sehr gut", "Gut", "Akzeptabel")
         - url: Direktlink zum Angebot
         - availability: Verfügbarkeit
-        - platform: Die Plattform (eurobuch, zvab, booklooker)
+        - platform: Die Plattform (eurobuch, zvab, booklooker, ebay)
         
         Bewerte die Qualität der gefundenen Daten:
         - overall_confidence_score: Ein Wert zwischen 0.0 und 1.0. 
@@ -288,7 +310,7 @@ class PriceGroundingClient:
         - reasoning: Eine kurze Begründung deiner Einschätzung (auf Deutsch).
 
         WICHTIG:
-        - Erfinde keine Daten! Gib nur reale Angebote zurück.
+        - Erfinde keine Daten! Gib nur reale Angebote zurück, die du in der Google Suche via Grounding gefunden hast.
         - Vergleiche die gefundenen Ergebnisse mit dem Verlag ({publisher if publisher else 'unbekannt'}) und Jahr ({year if year else 'unbekannt'}), um Fehlzuordnungen zu vermeiden.
         - Wenn keine Angebote für diese spezifische Ausgabe gefunden werden, gib ein leeres Array zurück, einen Score von 0.0 und eine entsprechende Begründung.
         - Preise OHNE Versandkosten.
