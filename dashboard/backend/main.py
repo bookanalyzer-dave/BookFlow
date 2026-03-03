@@ -50,7 +50,6 @@ load_dotenv()
                 os.environ["GOOGLE_CLOUD_PROJECT"] = val
                 os.environ["GCP_PROJECT_ID"] = val
 
-# Execute repair immediately
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
