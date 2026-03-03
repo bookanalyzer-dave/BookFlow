@@ -19,10 +19,11 @@ logger = logging.getLogger(__name__)
 
 # VERSION MARKER
 logger.info("**************************************************")
-logger.info("VERSION MARKER: v3.2.0-PRICE-TRIGGER-FIX")
+logger.info("VERSION MARKER: v3.2.0-PRICE-FALLBACK")
 logger.info("**************************************************")
 
 def get_required_env(key: str) -> str:
+    """Holt eine Umgebungsvariable oder wirft einen Fehler, wenn sie fehlt."""
     value = os.environ.get(key)
     if not value:
         raise RuntimeError(f"CRITICAL: Environment variable '{key}' is not set.")
@@ -43,6 +44,9 @@ try:
 except Exception as e:
     logger.critical(f"Failed to initialize Firestore client: {e}")
     raise
+
+def get_firestore_client():
+    return db
 
 try:
     project_id = get_project_id()
@@ -71,6 +75,7 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
         message_data = base64.b64decode(cloud_event.data["message"]["data"]).decode('utf-8')
         message_json = json.loads(message_data)
     except Exception as e:
+        logger.error(f"Invalid message format: {e}")
         raise ValueError(f"Invalid message format: {e}")
 
     book_id = message_json.get('bookId')
@@ -78,8 +83,10 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
     uid = message_json.get('uid')
 
     if not all([book_id, image_urls, uid]) or not isinstance(image_urls, list) or len(image_urls) == 0:
+        logger.error(f"Missing required fields or empty imageUrls in message: {message_json}")
         raise ValueError("Missing required fields or empty imageUrls")
 
+    logger.info(f"📨 Received Pub/Sub message - bookId: {book_id}, uid: {uid}, images: {len(image_urls)}")
     book_ref = db.collection('users').document(uid).collection('books').document(book_id)
 
     @firestore.transactional
@@ -128,11 +135,12 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
                 "_metadata": {
                     "processing_time_ms": result.processing_time_ms,
                     "simplified_ingestion": True,
+                    "grounding_metadata": result.grounding_metadata.model_dump() if result.grounding_metadata else None,
                     "library_version": "v3.2.0" 
                 }
             }
             book_ref.update(final_data)
-            logger.info(f"Simplified ingestion processed for book {book_id}")
+            logger.info(f"Simplified ingestion processed for book {book_id} with status {final_data['status']}")
 
             if publisher:
                 # 1. Trigger Condition Assessment
@@ -141,24 +149,40 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
                         payload = {"book_id": book_id, "user_id": uid, "image_urls": image_urls, "metadata": final_data}
                         data = json.dumps(payload).encode("utf-8")
                         publisher.publish(condition_topic_path, data)
+                        logger.info(f"✅ Successfully published condition assessment job for book {book_id}")
                     except Exception as e:
-                        logger.error(f"❌ Failed to trigger condition assessment: {e}")
+                        logger.error(f"❌ Failed to trigger condition assessment for book {book_id}: {e}")
                 
-                # 2. Trigger Price Research (FIX: Immer triggern, mit Title als Fallback)
+                # 2. Trigger Price Research (FIX: Fallback auf Titel/Autor, wenn keine ISBN)
                 isbn = final_data.get('isbn')
                 title = final_data.get('title')
                 if price_topic_path and (isbn or title):
                     try:
-                        payload = {"bookId": book_id, "uid": uid, "isbn": isbn, "title": title}
+                        # Fallback: Sende ISBN oder nutze "Title + Autor" als Suche
+                        payload = {
+                            "bookId": book_id, 
+                            "uid": uid, 
+                            "isbn": isbn or "UNKNOWN", 
+                            "title": title or "Unknown Title"
+                        }
                         data = json.dumps(payload).encode("utf-8")
                         publisher.publish(price_topic_path, data)
-                        logger.info(f"✅ Triggered price research for {book_id} (ISBN: {isbn}, Title: {title})")
+                        logger.info(f"✅ Successfully published price research job for book {book_id} (ISBN: {isbn}, Title: {title})")
                     except Exception as e:
-                        logger.error(f"❌ Failed to trigger price research: {e}")
+                        logger.error(f"❌ Failed to trigger price research for book {book_id}: {e}")
+            else:
+                logger.error("❌ Pub/Sub publisher not initialized.")
 
         else:
-            book_ref.update({'status': 'analysis_failed'})
+            book_ref.update({
+                'status': 'analysis_failed',
+                'error_message': 'Gemini returned no book data.',
+            })
 
+    except IngestionException as e:
+        book_ref.update({
+            'status': 'analysis_failed',
+            'error_message': e.error.error_message,
+        })
     except Exception as e:
-        logger.error(f"Unexpected error for book {book_id}: {e}", exc_info=True)
         book_ref.update({'status': 'analysis_failed', 'error_message': str(e)})
