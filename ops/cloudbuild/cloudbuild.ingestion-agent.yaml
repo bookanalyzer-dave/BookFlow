@@ -17,7 +17,7 @@ steps:
     - 'managed'
     - '--no-allow-unauthenticated'
     - '--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest'
-    - '--set-env-vars=PYTHONPATH=../..,LOG_LEVEL=INFO,ENABLE_DETAILED_LOGGING=true,GCP_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GCS_BUCKET_NAME=${PROJECT_ID}-book-images,VERTEX_AI_LOCATION=europe-west1'
+    - '--set-env-vars=^||^PYTHONPATH=../..^||^LOG_LEVEL=INFO^||^ENABLE_DETAILED_LOGGING=true^||^GCP_PROJECT=${PROJECT_ID}^||^GOOGLE_CLOUD_PROJECT=${PROJECT_ID}^||^GCS_BUCKET_NAME=${PROJECT_ID}-book-images^||^VERTEX_AI_LOCATION=europe-west1'
 
 # Create Eventarc trigger (replaces old book-analyzed trigger)
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
