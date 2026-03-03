@@ -1,0 +1,24 @@
+{
+  "analysis_depth": {
+    "options": [
+      {
+        "id": "fast",
+        "name": "Schnell-Check",
+        "description": "Basis-Identifikation (Titel, Autor, ISBN) und grobe Zustandsschätzung. Dauer: ca. 5-10 Sekunden.",
+        "recommended": true
+      },
+      {
+        "id": "detailed",
+        "name": "Detailliertes Gutachten",
+        "description": "Tiefenanalyse inklusive KI-basierter Mängelerkennung (Knicke, Verfärbungen), Preisrecherche auf internationalen Marktplätzen und detaillierter Sammler-Bewertung. Dauer: ca. 30-60 Sekunden.",
+        "recommended": false
+      }
+    ],
+    "default": "fast"
+  },
+  "market_scan": {
+    "enabled_platforms": ["ebay", "abebooks", "zvab"],
+    "max_results": 5
+  },
+  "auto_publish": false
+}
