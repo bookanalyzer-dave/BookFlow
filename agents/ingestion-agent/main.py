@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # VERSION MARKER
 logger.info("**************************************************")
-logger.info("VERSION MARKER: v3.2.0-PRICE-TRIGGER-FIX")
+logger.info("VERSION MARKER: v3.2.0-PRICE-FALLBACK")
 logger.info("**************************************************")
 
 def get_required_env(key: str) -> str:
@@ -59,6 +59,8 @@ try:
     condition_topic_path = publisher.topic_path(project_id, "condition-assessment-jobs")
     price_topic_path = publisher.topic_path(project_id, "price-research-requests")
     logger.info(f"Pub/Sub publisher initialized.")
+    logger.info(f"Condition Topic: {condition_topic_path}")
+    logger.info(f"Price Topic: {price_topic_path}")
 except Exception as e:
     logger.critical(f"Failed to initialize Pub/Sub publisher: {e}", exc_info=True)
     raise
@@ -101,9 +103,12 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
         snapshot = book_ref.get(transaction=transaction)
         if snapshot.exists:
             status = snapshot.to_dict().get('status')
+            logger.info(f"📄 Found existing document for {book_id} with status: {status}")
             if status in ['ingested', 'needs_review', 'analysis_failed', 'condition_assessed']:
                 logger.warning(f"Book {book_id} already finished ({status}). Skipping.")
                 return False
+        else:
+            logger.warning(f"⚠️ Document {book_id} does NOT exist in Firestore! This should not happen.")
         
         transaction.set(book_ref, {'status': 'ingesting'}, merge=True)
         logger.info(f"✅ Updated status to 'ingesting' for {book_id}")
@@ -163,13 +168,12 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
                     except Exception as e:
                         logger.error(f"❌ Failed to trigger condition assessment for book {book_id}: {e}")
                 
-                # 2. Trigger Price Research (FIXED: Trigger even without ISBN if Title is available)
-                isbn = final_data.get('isbn')
+                # 2. Trigger Price Research (jetzt IMMER, auch ohne ISBN)
                 title = final_data.get('title', '')
+                isbn = final_data.get('isbn')
                 if price_topic_path and (isbn or title):
                     try:
-                        # Fallback: pass empty string for isbn if it's None, but provide the title
-                        payload = {"bookId": book_id, "uid": uid, "isbn": isbn or "", "title": title}
+                        payload = {"bookId": book_id, "uid": uid, "isbn": isbn, "title": title}
                         data = json.dumps(payload).encode("utf-8")
                         publisher.publish(price_topic_path, data)
                         logger.info(f"✅ Successfully published price research job for book {book_id} (ISBN: {isbn}, Title: {title})")
@@ -179,6 +183,7 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
                 logger.error("❌ Pub/Sub publisher not initialized.")
 
         else:
+            logger.warning(f"Ingestion for book {book_id} failed: Gemini returned no book data.")
             book_ref.update({
                 'status': 'analysis_failed',
                 'error_message': 'Gemini returned no book data.',
@@ -186,6 +191,7 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
             })
 
     except IngestionException as e:
+        logger.error(f"Simplified ingestion failed for book {book_id}: {e.error.error_message}")
         book_ref.update({
             'status': 'analysis_failed',
             'error_message': e.error.error_message,
