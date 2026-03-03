@@ -20,8 +20,6 @@ import traceback
 # Load environment variables
 load_dotenv()
 
-# --- CRITICAL BOOTSTRAP REPAIR ---
-def bootstrap_env():
     """
     Repairs environment variables globally in os.environ before any clients are initialized.
     This fixes the persistent Pub/Sub topic path error caused by concatenated env vars.
@@ -53,7 +51,6 @@ def bootstrap_env():
                 os.environ["GCP_PROJECT_ID"] = val
 
 # Execute repair immediately
-bootstrap_env()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -145,7 +142,7 @@ try:
 except Exception as e:
     print(f"❌ Error initializing Google Cloud clients: {e}")
 
-# Get critical variables (already sanitized by bootstrap_env)
+# Get critical variables 
 project_id = os.environ.get("GCP_PROJECT")
 bucket_name = os.environ.get("GCS_BUCKET_NAME")
 vertex_location = os.environ.get("VERTEX_AI_LOCATION")
