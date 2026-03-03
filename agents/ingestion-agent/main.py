@@ -8,41 +8,32 @@ from typing import Any
 from google.cloud import pubsub_v1
 from google.cloud import firestore
 
-# Imports aus der Shared Library
 from shared.simplified_ingestion.models import BookIngestionRequest
 from shared.simplified_ingestion.core import ingest_book_with_retry, IngestionException
 from shared.simplified_ingestion.config import IngestionConfig
 
-# Konfiguriere Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# VERSION MARKER
 logger.info("**************************************************")
-logger.info("VERSION MARKER: v3.1.0-ROBUSTNESS-FIXES")
+logger.info("VERSION MARKER: v3.1.1-ROBUST-PRICE-TRIGGER")
 logger.info("**************************************************")
 
 def get_required_env(key: str) -> str:
-    """Holt eine Umgebungsvariable oder wirft einen Fehler, wenn sie fehlt."""
     value = os.environ.get(key)
     if not value:
         raise RuntimeError(f"CRITICAL: Environment variable '{key}' is not set.")
     return value
 
-# Function to get Project ID from environment (Strict Mode)
 def get_project_id():
-    """Returns the Project ID from environment variables."""
     return get_required_env("GCP_PROJECT")
 
-# Konfiguration mit aktiviertem Grounding
-# Nutze Env Var GEMINI_MODEL falls vorhanden, sonst Default aus Config (gemini-2.5-pro)
 model_env = os.environ.get("GEMINI_MODEL")
 if model_env:
     INGESTION_CONFIG = IngestionConfig(enable_grounding=True, model=model_env)
 else:
     INGESTION_CONFIG = IngestionConfig(enable_grounding=True)
 
-# Firestore Client Initialisierung (dynamisch)
 try:
     project_id = get_project_id()
     db = firestore.Client(project=project_id)
@@ -53,36 +44,28 @@ except Exception as e:
 def get_firestore_client():
     return db
 
-# Initialize Pub/Sub client
 try:
     project_id = get_project_id()
     publisher = pubsub_v1.PublisherClient()
-    # FIX: Korrektes Topic für Condition Assessor (gemäß Eventarc Trigger)
     condition_topic_path = publisher.topic_path(project_id, "condition-assessment-jobs")
-    # NEU: Topic für Price Research
     price_topic_path = publisher.topic_path(project_id, "price-research-requests")
     logger.info(f"Pub/Sub publisher initialized.")
     logger.info(f"Condition Topic: {condition_topic_path}")
     logger.info(f"Price Topic: {price_topic_path}")
 except Exception as e:
     logger.critical(f"Failed to initialize Pub/Sub publisher: {e}", exc_info=True)
-    # Fail fast: Ohne Pub/Sub können wir nicht arbeiten
     raise
 
 @functions_framework.cloud_event
 def ingestion_analysis_agent(cloud_event: Any):
-    """Wrapper für die Cloud Function."""
     try:
         asyncio.run(_async_ingestion_analysis_agent(cloud_event))
         return "OK", 200
     except (json.JSONDecodeError, ValueError, KeyError) as e:
-        # Permanente Fehler (Datenformat falsch, Felder fehlen) -> Kein Retry
         logger.error(f"Permanent Error (No Retry): {e}", exc_info=True)
         return "Bad Request", 200
     except Exception as e:
-        # Transiente Fehler (DB Timeout, API Fehler) -> Retry (500)
         logger.critical(f"Transient Error (Will Retry): {e}", exc_info=True)
-        # Exception werfen, damit Cloud Functions 500 sendet und Pub/Sub retried
         raise e
 
 
@@ -92,7 +75,6 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
         message_json = json.loads(message_data)
     except Exception as e:
         logger.error(f"Invalid message format: {e}")
-        # Wirft Fehler weiter an Wrapper für Entscheidung
         raise ValueError(f"Invalid message format: {e}")
 
     book_id = message_json.get('bookId')
@@ -104,7 +86,6 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
         raise ValueError("Missing required fields or empty imageUrls")
 
     logger.info(f"📨 Received Pub/Sub message - bookId: {book_id}, uid: {uid}, images: {len(image_urls)}")
-    logger.info(f"Processing book {book_id} for user {uid} with {len(image_urls)} images")
     book_ref = db.collection('users').document(uid).collection('books').document(book_id)
 
     @firestore.transactional
@@ -113,11 +94,9 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
         if snapshot.exists:
             status = snapshot.to_dict().get('status')
             logger.info(f"📄 Found existing document for {book_id} with status: {status}")
-            # Nur bei finalen States überspringen - erlaubt Retry bei pending_analysis
             if status in ['ingested', 'needs_review', 'analysis_failed', 'condition_assessed']:
                 logger.warning(f"Book {book_id} already finished ({status}). Skipping.")
                 return False
-            # Erlaubt Retry bei 'pending_analysis' oder 'ingesting'
         else:
             logger.warning(f"⚠️ Document {book_id} does NOT exist in Firestore! This should not happen.")
         
@@ -139,8 +118,6 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
             image_urls=image_urls
         )
         
-        # Aufruf der Shared Library Logik
-        # Hier wird jetzt Search Grounding aktiv genutzt (via INGESTION_CONFIG)
         result = await ingest_book_with_retry(request, config=INGESTION_CONFIG)
         
         if result.book_data:
@@ -164,7 +141,7 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
                     "processing_time_ms": result.processing_time_ms,
                     "simplified_ingestion": True,
                     "grounding_metadata": result.grounding_metadata.model_dump() if result.grounding_metadata else None,
-                    "library_version": "v3.0.0" 
+                    "library_version": "v3.1.1" 
                 }
             }
             book_ref.update(final_data)
@@ -181,26 +158,28 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
                     except Exception as e:
                         logger.error(f"❌ Failed to trigger condition assessment for book {book_id}: {e}")
                 
-                # 2. Trigger Price Research (Immer auslösen, auch ohne ISBN)
+                # 2. Trigger Price Research (FIX: IMMER triggern, auch ohne ISBN)
+                isbn = final_data.get('isbn')
                 title = final_data.get('title')
                 authors = final_data.get('authors', [])
-                author_str = ", ".join(authors) if isinstance(authors, list) else str(authors)
-                isbn = final_data.get('isbn')
+                author_str = authors[0] if authors else ''
                 
-                if price_topic_path and (isbn or title):
+                if price_topic_path and (isbn or (title and author_str)):
                     try:
                         payload = {
                             "bookId": book_id, 
                             "uid": uid, 
-                            "isbn": isbn, 
+                            "isbn": isbn or "", 
                             "title": title,
-                            "authors": author_str
+                            "author": author_str
                         }
                         data = json.dumps(payload).encode("utf-8")
                         publisher.publish(price_topic_path, data)
-                        logger.info(f"✅ Successfully published price research job for book {book_id} (ISBN: {isbn}, Title: {title})")
+                        logger.info(f"✅ Successfully published price research job for book {book_id}. Used ISBN: {bool(isbn)}")
                     except Exception as e:
                         logger.error(f"❌ Failed to trigger price research for book {book_id}: {e}")
+                else:
+                    logger.warning(f"⚠️ Could not trigger price research for {book_id}: Need either ISBN or Title+Author.")
             else:
                 logger.error("❌ Pub/Sub publisher not initialized.")
 
