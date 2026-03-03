@@ -42,12 +42,15 @@ def price_research_handler(cloud_event: CloudEvent) -> None:
         uid = message_data.get('uid')
         isbn = message_data.get('isbn')
         title = message_data.get('title', '')
+        authors = message_data.get('authors', [])
         
-        if not all([book_id, uid, isbn]):
-            logger.error(f"Missing required data in message: {message_data}")
+        # We need either ISBN OR Title to do a search
+        if not all([book_id, uid]) or not (isbn or title):
+            logger.error(f"Missing required data (bookId, uid, or [isbn/title]) in message: {message_data}")
             return
 
-        logger.info(f"🚀 Starting background price research for ISBN {isbn} (Book: {book_id})")
+        search_term = isbn if isbn else title
+        logger.info(f"🚀 Starting background price research for '{search_term}' (Book: {book_id})")
         
         # Run async logic
         asyncio.run(run_price_research(
@@ -57,7 +60,7 @@ def price_research_handler(cloud_event: CloudEvent) -> None:
             uid=uid
         ))
         
-        logger.info(f"✅ Background price research completed for ISBN {isbn}")
+        logger.info(f"✅ Background price research completed for '{search_term}'")
         
     except Exception as e:
         logger.error(f"❌ Error in price_research_handler: {str(e)}", exc_info=True)
