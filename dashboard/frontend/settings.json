@@ -1,0 +1,33 @@
+{
+  "analysis_modes": [
+    {
+      "id": "quick_scan",
+      "label": "Schnell-Check",
+      "description": "Basis-Erkennung von Titel und Autor. Gut für große Mengen.",
+      "estimated_time_seconds": 15,
+      "cost_factor": 1.0,
+      "ai_model": "gemini-3.0-flash",
+      "features": {
+        "grounding": false,
+        "deep_condition_assessment": false,
+        "market_price_scan": false
+      }
+    },
+    {
+      "id": "detailed_assessment",
+      "label": "Detailliertes Gutachten",
+      "description": "Tiefgreifende Zustandsbewertung und Marktforschung. Empfohlen für Antiquariat.",
+      "estimated_time_seconds": 45,
+      "cost_factor": 3.0,
+      "ai_model": "gemini-3.1-pro",
+      "features": {
+        "grounding": true,
+        "deep_condition_assessment": true,
+        "market_price_scan": true,
+        "isbn_verification": true
+      }
+    }
+  ],
+  "default_mode": "detailed_assessment",
+  "auto_process_on_upload": true
+}
