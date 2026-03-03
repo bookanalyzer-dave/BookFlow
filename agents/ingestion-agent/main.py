@@ -181,10 +181,12 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
                     except Exception as e:
                         logger.error(f"❌ Failed to trigger condition assessment for book {book_id}: {e}")
                 
-                # 2. Trigger Price Research (always if title or ISBN is present)
-                isbn = final_data.get('isbn')
+                # 2. Trigger Price Research (Immer auslösen, auch ohne ISBN)
                 title = final_data.get('title')
                 authors = final_data.get('authors', [])
+                author_str = ", ".join(authors) if isinstance(authors, list) else str(authors)
+                isbn = final_data.get('isbn')
+                
                 if price_topic_path and (isbn or title):
                     try:
                         payload = {
@@ -192,11 +194,11 @@ async def _async_ingestion_analysis_agent(cloud_event: Any) -> None:
                             "uid": uid, 
                             "isbn": isbn, 
                             "title": title,
-                            "authors": authors
+                            "authors": author_str
                         }
                         data = json.dumps(payload).encode("utf-8")
                         publisher.publish(price_topic_path, data)
-                        logger.info(f"✅ Successfully published price research job for book {book_id}")
+                        logger.info(f"✅ Successfully published price research job for book {book_id} (ISBN: {isbn}, Title: {title})")
                     except Exception as e:
                         logger.error(f"❌ Failed to trigger price research for book {book_id}: {e}")
             else:
